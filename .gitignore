@@ -1,0 +1,43 @@
+# =========================
+# Windows
+# =========================
+Thumbs.db
+Desktop.ini
+
+# =========================
+# macOS
+# =========================
+.DS_Store
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Entornos virtuales
+.venv/
+**/.venv/
+
+# =========================
+# Open WebUI
+# =========================
+Interfaces/OpenWebUI/data/
+Interfaces/OpenWebUI/cache/
+
+# Logs
+*.log
+
+# Entornos virtuales de Python
+**/.venv/
+
+# Datos privados de Open WebUI
+**/.webui_secret_key
+
