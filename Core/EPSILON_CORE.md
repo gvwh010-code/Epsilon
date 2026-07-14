@@ -185,6 +185,59 @@ Permiten interactuar con sistemas externos, por ejemplo:
 
 Las Tools permiten actuar u obtener evidencia.
 
+## 6.1 Projection
+
+Projection es la capa de adaptación entre las fuentes maestras de Epsilon y una interfaz concreta.
+
+Su función es traducir la arquitectura general a la forma operativa que necesita cada plataforma, sin modificar la identidad ni convertirse en una fuente maestra independiente.
+
+Una Projection puede incluir:
+
+- System Prompts;
+- instrucciones específicas de interfaz;
+- referencias a Knowledge;
+- asociación de Skills;
+- configuración de Tools;
+- formatos de contexto;
+- adaptaciones para modelos concretos;
+- reglas de carga o activación.
+
+Las Projections deben cumplir estas reglas:
+
+- derivarse del Core y de Architecture;
+- no introducir principios nuevos;
+- no reemplazar las fuentes maestras;
+- evitar duplicar contenido innecesario;
+- adaptarse a las capacidades de cada interfaz;
+- permanecer versionadas en el repositorio cuando sean importantes;
+- poder reconstruirse si la interfaz se pierde;
+- cambiar sin modificar la identidad de Epsilon.
+
+Projection no es un sexto pilar.
+
+Es una capa de adaptación que conecta la arquitectura con su implementación concreta.
+
+Ejemplos:
+
+- `Interfaces/OpenWebUI/EPSILON_PROJECTION.md`;
+- `Interfaces/Continue/EPSILON_PROJECTION.md`;
+- futuras proyecciones para otras interfaces.
+
+Una misma fuente maestra puede producir distintas Projections según la plataforma.
+
+Por ejemplo:
+
+`Core/EPSILON_CORE.md`
+
+puede proyectarse como:
+
+- System Prompt en Open WebUI;
+- instrucciones reducidas en Continue;
+- configuración para una interfaz de voz;
+- contexto base para otro agente local.
+
+Las Projections pueden reorganizar, resumir o adaptar contenido, pero deben conservar su significado.
+
 ## 7. Relación con modelos e interfaces
 
 Los modelos son motores de razonamiento reemplazables.
