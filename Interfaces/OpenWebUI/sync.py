@@ -26,7 +26,7 @@ def main() -> None:
     for module in modules:
         print(f"{module.name}:\n")
 
-        result = module.sync(dry_run=True)
+        result = module.sync(dry_run=False)
 
         if not result:
             success = False
