@@ -2,19 +2,11 @@ from pathlib import Path
 
 from client import OpenWebUIClient
 
+from projection import ProjectionManager
+from knowledge import KnowledgeManager
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-PROJECTION_PATH = (
-    PROJECT_ROOT
-    / "Interfaces"
-    / "OpenWebUI"
-    / "EPSILON_PROJECTION.md"
-)
-
-
-def normalize_text(text: str) -> str:
-    return text.replace("\r\n", "\n").strip()
 
 
 def main() -> None:
@@ -24,34 +16,27 @@ def main() -> None:
 
     client = OpenWebUIClient()
 
-    try:
-        model = client.get("/api/v1/models/model?id=epsilon")
-        remote_prompt = model.get("params", {}).get("system", "")
+    modules = [
+        ProjectionManager(PROJECT_ROOT, client),
+        KnowledgeManager(PROJECT_ROOT),
+    ]
 
-        local_prompt = PROJECTION_PATH.read_text(encoding="utf-8")
+    success = True
 
-        local_normalized = normalize_text(local_prompt)
-        remote_normalized = normalize_text(remote_prompt)
+    for module in modules:
+        print(f"{module.name}:\n")
 
-        print("✓ Modelo Epsilon leído correctamente")
-        print(f"✓ Proyección local encontrada: {PROJECTION_PATH}\n")
+        result = module.sync(dry_run=True)
 
-        if local_normalized == remote_normalized:
-            print("✓ System Prompt sincronizado")
-        else:
-            print("✗ System Prompt diferente")
-            print("\nRepositorio:")
-            print(f"  {len(local_normalized)} caracteres")
-            print("\nOpen WebUI:")
-            print(f"  {len(remote_normalized)} caracteres")
+        if not result:
+            success = False
 
-    except FileNotFoundError:
-        print("✗ No se encontró EPSILON_PROJECTION.md")
-        print(PROJECTION_PATH)
+        print()
 
-    except Exception as error:
-        print("✗ Error durante la comparación")
-        print(error)
+    if success:
+        print("✓ Sincronización completada")
+    else:
+        print("✗ Sincronización finalizada con errores")
 
 
 if __name__ == "__main__":

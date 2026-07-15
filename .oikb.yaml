@@ -1,0 +1,5 @@
+sources:
+- name: epsilon-system
+  source: ./Interfaces/OpenWebUI/knowledge_projection
+  kb-id: fcaf3991-d004-48d0-8c0c-41973d582367
+  interval: 1h

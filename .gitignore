@@ -41,3 +41,10 @@ Interfaces/OpenWebUI/cache/
 # Datos privados de Open WebUI
 **/.webui_secret_key
 
+# Datos persistentes de Open WebUI en Docker
+Infrastructure/openwebui-data/
+
+# Backups locales
+Backups/
+
+
