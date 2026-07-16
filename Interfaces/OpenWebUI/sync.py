@@ -4,6 +4,7 @@ from client import OpenWebUIClient
 
 from projection import ProjectionManager
 from knowledge import KnowledgeManager
+from skills import SkillsManager
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,7 @@ def main() -> None:
     modules = [
         ProjectionManager(PROJECT_ROOT, client),
         KnowledgeManager(PROJECT_ROOT),
+        SkillsManager(PROJECT_ROOT, client),
     ]
 
     success = True

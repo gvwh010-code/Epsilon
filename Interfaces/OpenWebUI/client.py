@@ -4,7 +4,6 @@ from config import Config
 
 
 class OpenWebUIClient:
-
     def __init__(self):
         self.config = Config()
 
@@ -20,5 +19,14 @@ class OpenWebUIClient:
         )
 
         response.raise_for_status()
+        return response.json()
 
+    def post(self, endpoint: str, payload: dict):
+        response = requests.post(
+            f"{self.config.base_url}{endpoint}",
+            headers=self.headers,
+            json=payload,
+        )
+
+        response.raise_for_status()
         return response.json()
