@@ -9,14 +9,26 @@ class KnowledgeManager(SyncModule):
 
     def __init__(self, project_root: Path):
         self.project_root = project_root
-        self.oikb_executable = (
+
+        venv_dir = (
             project_root
             / "Interfaces"
             / "OpenWebUI"
             / ".venv"
-            / "Scripts"
-            / "oikb.exe"
         )
+
+        windows_executable = venv_dir / "Scripts" / "oikb.exe"
+        linux_executable = venv_dir / "bin" / "oikb"
+
+        if windows_executable.exists():
+            self.oikb_executable = windows_executable
+        elif linux_executable.exists():
+            self.oikb_executable = linux_executable
+        else:
+            raise FileNotFoundError(
+                "No se encontró oikb dentro del entorno virtual. "
+                "Instálalo con: pip install oikb"
+            )
 
     def build_projection(self) -> None:
         import shutil
