@@ -36,6 +36,20 @@ class Config:
         ).strip()
     )
 
+    ollama_url: str = field(
+        default_factory=lambda: os.getenv(
+            "EPSILON_OLLAMA_URL",
+            "http://localhost:11434",
+        ).rstrip("/")
+    )
+
+    ollama_model: str = field(
+        default_factory=lambda: os.getenv(
+            "EPSILON_OLLAMA_MODEL",
+            "gemma4:12b",
+        ).strip()
+    )
+
     timeout_seconds: float = field(
         default_factory=read_timeout
     )

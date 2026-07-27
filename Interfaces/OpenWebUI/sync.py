@@ -6,7 +6,7 @@ from shutil import which
 from typing import Sequence
 from client import OpenWebUIClient, OpenWebUIClientError
 from config import Config
-
+from ollama_client import OllamaClient, OllamaClientError
 from results import DiagnosticResult
 
 
@@ -141,6 +141,133 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
 
     config = Config()
 
+    results.append(
+        DiagnosticResult(
+            component="Ollama URL",
+            status="ok",
+            summary=config.ollama_url,
+        )
+    )
+
+    ollama_client = OllamaClient(
+        base_url=config.ollama_url,
+        timeout_seconds=config.timeout_seconds,
+    )
+
+    try:
+        ollama_version = ollama_client.version()
+        installed_models = ollama_client.list_models()
+
+    except OllamaClientError as error:
+        results.append(
+            DiagnosticResult(
+                component="Ollama service",
+                status="error",
+                summary=str(error),
+            )
+        )
+
+    else:
+        results.append(
+            DiagnosticResult(
+                component="Ollama service",
+                status="ok",
+                summary="Servicio disponible",
+            )
+        )
+
+        results.append(
+            DiagnosticResult(
+                component="Ollama version",
+                status="ok",
+                summary=ollama_version,
+            )
+        )
+
+        expected_model = config.ollama_model
+
+        model = next(
+            (
+                item
+                for item in installed_models
+                if item.get("name") == expected_model
+                or item.get("model") == expected_model
+            ),
+            None,
+        )
+
+        if model is None:
+            results.append(
+                DiagnosticResult(
+                    component="Ollama model",
+                    status="error",
+                    summary=f"No instalado: {expected_model}",
+                )
+            )
+
+        else:
+            results.append(
+                DiagnosticResult(
+                    component="Ollama model",
+                    status="ok",
+                    summary=f"Instalado: {expected_model}",
+                )
+            )
+
+            digest = model.get("digest")
+
+            if isinstance(digest, str) and digest:
+                results.append(
+                    DiagnosticResult(
+                        component="Model digest",
+                        status="ok",
+                        summary=digest[:12],
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="Model digest",
+                        status="warning",
+                        summary="No informado",
+                    )
+                )
+
+            details = model.get("details")
+
+            if not isinstance(details, dict):
+                details = {}
+
+            quantization = details.get("quantization_level")
+
+            if isinstance(quantization, str) and quantization:
+                results.append(
+                    DiagnosticResult(
+                        component="Quantization",
+                        status="ok",
+                        summary=quantization,
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="Quantization",
+                        status="warning",
+                        summary="No informada",
+                    )
+                )
+
+            parameter_size = details.get("parameter_size")
+
+            if isinstance(parameter_size, str) and parameter_size:
+                results.append(
+                    DiagnosticResult(
+                        component="Parameter size",
+                        status="ok",
+                        summary=parameter_size,
+                    )
+                )
+                
     results.append(
         DiagnosticResult(
             component="Open WebUI URL",
