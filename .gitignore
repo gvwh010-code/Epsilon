@@ -49,3 +49,6 @@ Backups/
 
 
 **/.venv-windows-backup/
+
+# Local SearXNG environment
+docker/searxng/.env
