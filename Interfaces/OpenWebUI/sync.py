@@ -463,8 +463,26 @@ def run_doctor() -> int:
 
     return 1 if any(result.failed for result in results) else 0
 
-def print_plan(plan: Plan) -> None:
-    """Muestra los cambios propuestos sin aplicarlos."""
+def build_projection_manager() -> ProjectionManager:
+    """Construye el gestor usando la configuración activa."""
+
+    config = Config()
+    client = OpenWebUIClient(config)
+
+    return ProjectionManager(
+        project_root=PROJECT_ROOT,
+        client=client,
+        model_id=config.openwebui_model,
+        base_model_id=config.ollama_model,
+    )
+
+
+def print_plan(
+    plan: Plan,
+    *,
+    footer: str | None = "No se aplicaron cambios.",
+) -> None:
+    """Muestra un plan sin ejecutarlo."""
 
     print("===================================")
     print("        EPSILON PLAN")
@@ -494,24 +512,17 @@ def print_plan(plan: Plan) -> None:
     print(f"  Crear:      {plan.create_count}")
     print(f"  Actualizar: {plan.update_count}")
     print(f"  Total:      {len(plan.changes)}")
-    print()
-    print("No se aplicaron cambios.")
+
+    if footer is not None:
+        print()
+        print(footer)
 
 
 def run_plan() -> int:
-    """Compara Git con Open WebUI sin modificar ningún recurso."""
+    """Compara Git con Open WebUI sin modificar recursos."""
 
     try:
-        config = Config()
-        client = OpenWebUIClient(config)
-
-        manager = ProjectionManager(
-            project_root=PROJECT_ROOT,
-            client=client,
-            model_id=config.openwebui_model,
-            base_model_id=config.ollama_model,
-        )
-
+        manager = build_projection_manager()
         plan = manager.plan()
 
     except (
@@ -532,12 +543,65 @@ def run_plan() -> int:
     return 0
 
 
-def run_placeholder(command: str) -> int:
-    print(
-        f"El comando '{command}' todavía no está implementado. "
-        "No se aplicaron cambios."
-    )
-    return 2
+def run_apply(confirmed: bool) -> int:
+    """Aplica y verifica un plan solo con autorización explícita."""
+
+    try:
+        manager = build_projection_manager()
+        plan = manager.plan()
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        OpenWebUIClientError,
+    ) as error:
+        print("===================================")
+        print("        EPSILON APPLY")
+        print("===================================\n")
+        print(f"✗ No fue posible construir el plan: {error}")
+        print()
+        print("No se aplicaron cambios.")
+        return 1
+
+    print_plan(plan, footer=None)
+
+    if not plan.has_changes:
+        print()
+        print("✓ No había cambios que aplicar.")
+        return 0
+
+    if not confirmed:
+        print()
+        print("✗ Aplicación no autorizada.")
+        print(
+            "  Revisa el plan y repite el comando con --yes "
+            "para aprobarlo."
+        )
+        print("No se aplicaron cambios.")
+        return 2
+
+    try:
+        manager.apply(plan)
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        OpenWebUIClientError,
+    ) as error:
+        print()
+        print(f"✗ La aplicación falló: {error}")
+        print(
+            "El resultado no fue considerado válido. "
+            "Revisa nuevamente doctor y plan."
+        )
+        return 1
+
+    print()
+    print("✓ Aplicación completada y verificada.")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -557,9 +621,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compara el estado deseado y el estado activo.",
     )
 
-    subparsers.add_parser(
+    apply_parser = subparsers.add_parser(
         "apply",
         help="Aplica explícitamente un plan aprobado.",
+    )
+
+    apply_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Autoriza explícitamente la escritura en Open WebUI.",
     )
 
     subparsers.add_parser(
@@ -579,6 +649,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "plan":
         return run_plan()
+
+    if arguments.command == "apply":
+        return run_apply(arguments.yes)
 
     return run_placeholder(arguments.command)
 

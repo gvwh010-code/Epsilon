@@ -136,6 +136,130 @@ class ProjectionManager(SyncModule):
             )
         )
 
+    def build_import_model(
+        self,
+        remote_model: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Construye el modelo mínimo que se enviará a Open WebUI."""
+
+        remote_name = (
+            remote_model.get("name")
+            if remote_model is not None
+            else None
+        )
+
+        if isinstance(remote_name, str) and remote_name.strip():
+            model_name = remote_name
+        else:
+            model_name = "Epsilon"
+
+        remote_is_active = (
+            remote_model.get("is_active")
+            if remote_model is not None
+            else None
+        )
+
+        is_active = (
+            remote_is_active
+            if isinstance(remote_is_active, bool)
+            else True
+        )
+
+        remote_params = (
+            remote_model.get("params")
+            if remote_model is not None
+            else None
+        )
+
+        if isinstance(remote_params, dict):
+            params = {
+                **remote_params,
+                "system": self.read_local(),
+            }
+        else:
+            params = {
+                "system": self.read_local(),
+            }
+
+        return {
+            "id": self.model_id,
+            "name": model_name,
+            "base_model_id": self.base_model_id,
+            "meta": {},
+            "params": params,
+            "is_active": is_active,
+        }
+        
+    def apply(self, expected_plan: Plan) -> None:
+        """Aplica un plan previamente revisado y verifica el resultado."""
+
+        current_plan = self.plan()
+
+        if current_plan != expected_plan:
+            raise RuntimeError(
+                "El estado cambió después de construir el plan. "
+                "Genera un plan nuevo antes de aplicar."
+            )
+
+        if not current_plan.has_changes:
+            return
+
+        if len(current_plan.changes) != 1:
+            raise RuntimeError(
+                "Projection solo puede aplicar un cambio por ejecución."
+            )
+
+        change = current_plan.changes[0]
+
+        if (
+            change.component != "projection"
+            or change.resource_id != self.model_id
+            or change.action not in {"create", "update"}
+        ):
+            raise RuntimeError(
+                "El plan contiene una operación no permitida "
+                "para Projection."
+            )
+
+        remote_models = self.read_remote_models()
+        remote_model = self.find_remote_model(remote_models)
+
+        if change.action == "create" and remote_model is not None:
+            raise RuntimeError(
+                "El plan indicaba crear el modelo, "
+                "pero el modelo ya existe."
+            )
+
+        if change.action == "update" and remote_model is None:
+            raise RuntimeError(
+                "El plan indicaba actualizar el modelo, "
+                "pero el modelo ya no existe."
+            )
+
+        import_model = self.build_import_model(remote_model)
+
+        self.client.import_models([import_model])
+
+        verification_plan = self.plan()
+
+        if verification_plan.has_changes:
+            remaining_reasons = tuple(
+                reason
+                for pending_change in verification_plan.changes
+                for reason in pending_change.reasons
+            )
+
+            details = (
+                "; ".join(remaining_reasons)
+                if remaining_reasons
+                else "el estado remoto todavía es diferente"
+            )
+
+            raise RuntimeError(
+                "Open WebUI respondió a la importación, "
+                f"pero la verificación posterior falló: {details}."
+            )
+
     def sync(self, dry_run: bool = True) -> bool:
         """Adaptador temporal para el contrato SyncModule antiguo."""
 
