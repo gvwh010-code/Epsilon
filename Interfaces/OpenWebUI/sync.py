@@ -14,9 +14,14 @@ from client import (
 )
 
 from config import Config
+from knowledge import KnowledgeManager, KnowledgeManagerError
 from ollama_client import OllamaClient, OllamaClientError
 from projection import ProjectionManager
-from results import DiagnosticResult, Plan
+from results import (
+    DiagnosticResult,
+    KnowledgeDiffResult,
+    Plan,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INTERFACE_DIR = Path(__file__).resolve().parent
@@ -463,26 +468,43 @@ def run_doctor() -> int:
 
     return 1 if any(result.failed for result in results) else 0
 
-def build_projection_manager() -> ProjectionManager:
-    """Construye el gestor usando la configuración activa."""
+def build_projection_manager(
+    config: Config | None = None,
+) -> ProjectionManager:
+    """Construye el gestor de Projection."""
 
-    config = Config()
-    client = OpenWebUIClient(config)
+    active_config = config or Config()
+    client = OpenWebUIClient(active_config)
 
     return ProjectionManager(
         project_root=PROJECT_ROOT,
         client=client,
-        model_id=config.openwebui_model,
-        base_model_id=config.ollama_model,
+        model_id=active_config.openwebui_model,
+        base_model_id=active_config.ollama_model,
+    )
+
+
+def build_knowledge_manager(
+    config: Config | None = None,
+) -> KnowledgeManager:
+    """Construye el gestor de Knowledge."""
+
+    active_config = config or Config()
+
+    return KnowledgeManager(
+        project_root=PROJECT_ROOT,
+        config=active_config,
+        source_name="epsilon-system",
     )
 
 
 def print_plan(
     plan: Plan,
+    knowledge: KnowledgeDiffResult | None = None,
     *,
     footer: str | None = "No se aplicaron cambios.",
 ) -> None:
-    """Muestra un plan sin ejecutarlo."""
+    """Muestra los cambios detectados sin ejecutarlos."""
 
     print("===================================")
     print("        EPSILON PLAN")
@@ -507,11 +529,53 @@ def print_plan(
             for reason in change.reasons:
                 print(f"    - {reason}")
 
+    if knowledge is not None:
+        if not knowledge.has_changes:
+            print(
+                "✓ Knowledge              "
+                f"Sin cambios ({knowledge.unmodified} archivos)"
+            )
+        else:
+            print(
+                "~ Knowledge              "
+                "Cambios pendientes"
+            )
+            print(f"    - Agregar archivos: {knowledge.added}")
+            print(f"    - Modificar archivos: {knowledge.modified}")
+            print(f"    - Eliminar archivos: {knowledge.deleted}")
+            print(
+                "    - Crear carpetas: "
+                f"{knowledge.dirs_created}"
+            )
+            print(
+                "    - Retirar carpetas: "
+                f"{knowledge.dirs_removed}"
+            )
+
+            if knowledge.has_destructive_changes:
+                print(
+                    "    ! Contiene operaciones "
+                    "potencialmente destructivas."
+                )
+
+        for warning in knowledge.warnings:
+            print(f"    ! {warning}")
+
     print()
-    print("Resumen:")
+    print("Resumen de Projection:")
     print(f"  Crear:      {plan.create_count}")
     print(f"  Actualizar: {plan.update_count}")
     print(f"  Total:      {len(plan.changes)}")
+
+    if knowledge is not None:
+        print()
+        print("Resumen de Knowledge:")
+        print(f"  Agregar:          {knowledge.added}")
+        print(f"  Modificar:        {knowledge.modified}")
+        print(f"  Eliminar:         {knowledge.deleted}")
+        print(f"  Carpetas crear:   {knowledge.dirs_created}")
+        print(f"  Carpetas retirar: {knowledge.dirs_removed}")
+        print(f"  Total:            {knowledge.total_changes}")
 
     if footer is not None:
         print()
@@ -522,13 +586,19 @@ def run_plan() -> int:
     """Compara Git con Open WebUI sin modificar recursos."""
 
     try:
-        manager = build_projection_manager()
-        plan = manager.plan()
+        config = Config()
+
+        projection_manager = build_projection_manager(config)
+        knowledge_manager = build_knowledge_manager(config)
+
+        projection_plan = projection_manager.plan()
+        knowledge_result = knowledge_manager.plan()
 
     except (
         FileNotFoundError,
         OSError,
         RuntimeError,
+        KnowledgeManagerError,
         OpenWebUIClientError,
     ) as error:
         print("===================================")
@@ -539,12 +609,16 @@ def run_plan() -> int:
         print("No se aplicaron cambios.")
         return 1
 
-    print_plan(plan)
+    print_plan(
+        projection_plan,
+        knowledge_result,
+    )
+
     return 0
 
 
 def run_apply(confirmed: bool) -> int:
-    """Aplica y verifica un plan solo con autorización explícita."""
+    """Aplica y verifica Projection con autorización explícita."""
 
     try:
         manager = build_projection_manager()
@@ -568,7 +642,11 @@ def run_apply(confirmed: bool) -> int:
 
     if not plan.has_changes:
         print()
-        print("✓ No había cambios que aplicar.")
+        print("✓ No había cambios de Projection que aplicar.")
+        print(
+            "Knowledge todavía no se aplica "
+            "automáticamente."
+        )
         return 0
 
     if not confirmed:
@@ -600,61 +678,112 @@ def run_apply(confirmed: bool) -> int:
         return 1
 
     print()
-    print("✓ Aplicación completada y verificada.")
+    print("✓ Projection aplicada y verificada.")
+    print(
+        "Knowledge todavía no se aplica "
+        "automáticamente."
+    )
+
     return 0
 
-def print_verification(plan: Plan) -> None:
-    """Muestra si el estado activo coincide con el repositorio."""
+
+def print_verification(
+    plan: Plan,
+    knowledge: KnowledgeDiffResult,
+) -> None:
+    """Muestra si Projection y Knowledge coinciden."""
 
     print("===================================")
     print("       EPSILON VERIFY")
     print("===================================\n")
 
-    if not plan.has_changes:
+    projection_verified = not plan.has_changes
+    knowledge_verified = (
+        not knowledge.failed
+        and not knowledge.has_changes
+    )
+
+    if projection_verified:
         print("✓ Projection             Estado verificado")
-        print()
-        print("El estado activo coincide con Git.")
-        print("No se aplicaron cambios.")
-        return
+    else:
+        print("✗ Projection             No coincide con Git")
 
-    symbols = {
-        "create": "+",
-        "update": "~",
-    }
+        symbols = {
+            "create": "+",
+            "update": "~",
+        }
 
-    print("✗ El estado activo no coincide con Git.\n")
+        for change in plan.changes:
+            symbol = symbols[change.action]
 
-    for change in plan.changes:
-        symbol = symbols[change.action]
+            print(
+                f"    {symbol} {change.summary}"
+            )
 
+            for reason in change.reasons:
+                print(f"      - {reason}")
+
+    if knowledge_verified:
         print(
-            f"{symbol} {change.component:<22} "
-            f"{change.summary}"
+            "✓ Knowledge              "
+            f"Estado verificado ({knowledge.unmodified} archivos)"
+        )
+    else:
+        print("✗ Knowledge              No coincide con la proyección")
+        print(f"    - Agregar archivos: {knowledge.added}")
+        print(f"    - Modificar archivos: {knowledge.modified}")
+        print(f"    - Eliminar archivos: {knowledge.deleted}")
+        print(
+            "    - Crear carpetas: "
+            f"{knowledge.dirs_created}"
+        )
+        print(
+            "    - Retirar carpetas: "
+            f"{knowledge.dirs_removed}"
         )
 
-        for reason in change.reasons:
-            print(f"    - {reason}")
+        if knowledge.has_destructive_changes:
+            print(
+                "    ! Contiene operaciones "
+                "potencialmente destructivas."
+            )
+
+    for warning in knowledge.warnings:
+        print(f"    ! {warning}")
 
     print()
-    print("Resumen:")
-    print(f"  Crear:      {plan.create_count}")
-    print(f"  Actualizar: {plan.update_count}")
-    print(f"  Total:      {len(plan.changes)}")
-    print()
+
+    if projection_verified and knowledge_verified:
+        print(
+            "El estado activo de Projection y Knowledge "
+            "coincide con el repositorio."
+        )
+    else:
+        print(
+            "El estado activo no coincide completamente "
+            "con el repositorio."
+        )
+
     print("No se aplicaron cambios.")
 
 
 def run_verify() -> int:
-    """Verifica el estado remoto sin modificar ningún recurso."""
+    """Verifica Projection y Knowledge sin modificar recursos."""
 
     try:
-        manager = build_projection_manager()
-        plan = manager.plan()
+        config = Config()
+
+        projection_manager = build_projection_manager(config)
+        knowledge_manager = build_knowledge_manager(config)
+
+        projection_plan = projection_manager.plan()
+        knowledge_result = knowledge_manager.plan()
 
     except (
         FileNotFoundError,
         OSError,
         RuntimeError,
+        KnowledgeManagerError,
         OpenWebUIClientError,
     ) as error:
         print("===================================")
@@ -665,12 +794,23 @@ def run_verify() -> int:
         print("No se aplicaron cambios.")
         return 1
 
-    print_verification(plan)
+    print_verification(
+        projection_plan,
+        knowledge_result,
+    )
 
-    return 1 if plan.has_changes else 0
+    if (
+        projection_plan.has_changes
+        or knowledge_result.failed
+        or knowledge_result.has_changes
+    ):
+        return 1
 
+    return 0
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construye la interfaz de comandos de Epsilon."""
+
     parser = argparse.ArgumentParser(
         description="Diagnóstico y reconciliación de Epsilon.",
     )
@@ -700,11 +840,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "verify",
-        help="Verifica el estado después de aplicar cambios.",
+        help="Verifica el estado activo sin aplicar cambios.",
     )
 
     return parser
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
