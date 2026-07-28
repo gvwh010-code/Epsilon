@@ -603,6 +603,72 @@ def run_apply(confirmed: bool) -> int:
     print("✓ Aplicación completada y verificada.")
     return 0
 
+def print_verification(plan: Plan) -> None:
+    """Muestra si el estado activo coincide con el repositorio."""
+
+    print("===================================")
+    print("       EPSILON VERIFY")
+    print("===================================\n")
+
+    if not plan.has_changes:
+        print("✓ Projection             Estado verificado")
+        print()
+        print("El estado activo coincide con Git.")
+        print("No se aplicaron cambios.")
+        return
+
+    symbols = {
+        "create": "+",
+        "update": "~",
+    }
+
+    print("✗ El estado activo no coincide con Git.\n")
+
+    for change in plan.changes:
+        symbol = symbols[change.action]
+
+        print(
+            f"{symbol} {change.component:<22} "
+            f"{change.summary}"
+        )
+
+        for reason in change.reasons:
+            print(f"    - {reason}")
+
+    print()
+    print("Resumen:")
+    print(f"  Crear:      {plan.create_count}")
+    print(f"  Actualizar: {plan.update_count}")
+    print(f"  Total:      {len(plan.changes)}")
+    print()
+    print("No se aplicaron cambios.")
+
+
+def run_verify() -> int:
+    """Verifica el estado remoto sin modificar ningún recurso."""
+
+    try:
+        manager = build_projection_manager()
+        plan = manager.plan()
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        OpenWebUIClientError,
+    ) as error:
+        print("===================================")
+        print("       EPSILON VERIFY")
+        print("===================================\n")
+        print(f"✗ No fue posible verificar el estado: {error}")
+        print()
+        print("No se aplicaron cambios.")
+        return 1
+
+    print_verification(plan)
+
+    return 1 if plan.has_changes else 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -644,6 +710,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
 
+    if arguments.command is None:
+        parser.print_help()
+        return 0
+
     if arguments.command == "doctor":
         return run_doctor()
 
@@ -653,8 +723,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "apply":
         return run_apply(arguments.yes)
 
-    return run_placeholder(arguments.command)
+    if arguments.command == "verify":
+        return run_verify()
 
+    parser.error(
+        f"Comando no reconocido: {arguments.command}"
+    )
+    return 2
 
 if __name__ == "__main__":
     raise SystemExit(main())
