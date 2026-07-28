@@ -106,6 +106,22 @@ def load_source_entry(
 
     return source_path, kb_id.strip()
 
+def ensure_non_empty_source(source_path: Path) -> None:
+    """Rechaza una fuente sin archivos sincronizables."""
+
+    connector = FilesystemConnector(source_path)
+
+    try:
+        manifest = connector.build_manifest()
+    finally:
+        connector.close()
+
+    if not manifest:
+        raise RuntimeError(
+            "La fuente Knowledge no contiene archivos "
+            "sincronizables; se rechaza la comparación "
+            "para evitar un falso estado limpio."
+        )
 
 def result_to_dict(result: SyncResult) -> dict[str, Any]:
     """Convierte SyncResult en datos JSON estables."""
@@ -179,6 +195,8 @@ def main() -> int:
             config_path=config_path,
             source_name=arguments.name,
         )
+
+        ensure_non_empty_source(source_path)
 
         base_url = require_environment(
             "OPEN_WEBUI_URL"

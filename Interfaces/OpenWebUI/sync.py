@@ -21,6 +21,7 @@ from projection import ProjectionManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
+    KnowledgeProjectionDiffResult,
     Plan,
 )
 
@@ -607,6 +608,9 @@ def build_knowledge_manager(
 
 def print_plan(
     plan: Plan,
+    knowledge_projection: (
+        KnowledgeProjectionDiffResult | None
+    ) = None,
     knowledge: KnowledgeDiffResult | None = None,
     *,
     footer: str | None = "No se aplicaron cambios.",
@@ -636,16 +640,44 @@ def print_plan(
             for reason in change.reasons:
                 print(f"    - {reason}")
 
+    if knowledge_projection is not None:
+        if not knowledge_projection.has_changes:
+            print(
+                "✓ Knowledge projection   "
+                "Sin cambios "
+                f"({knowledge_projection.unchanged_count} archivos)"
+            )
+        else:
+            print(
+                "~ Knowledge projection   "
+                "No coincide con las fuentes canónicas"
+            )
+
+            for path in knowledge_projection.added:
+                print(f"    + Agregar:   {path}")
+
+            for path in knowledge_projection.modified:
+                print(f"    ~ Actualizar:{path}")
+
+            for path in knowledge_projection.deleted:
+                print(f"    - Retirar:   {path}")
+
+            if knowledge_projection.has_removals:
+                print(
+                    "    ! La reconstrucción retiraría "
+                    "archivos de la proyección."
+                )
+
     if knowledge is not None:
         if not knowledge.has_changes:
             print(
-                "✓ Knowledge              "
+                "✓ Knowledge remote       "
                 f"Sin cambios ({knowledge.unmodified} archivos)"
             )
         else:
             print(
-                "~ Knowledge              "
-                "Cambios pendientes"
+                "~ Knowledge remote       "
+                "No coincide con la proyección local"
             )
             print(f"    - Agregar archivos: {knowledge.added}")
             print(f"    - Modificar archivos: {knowledge.modified}")
@@ -674,9 +706,29 @@ def print_plan(
     print(f"  Actualizar: {plan.update_count}")
     print(f"  Total:      {len(plan.changes)}")
 
+    if knowledge_projection is not None:
+        print()
+        print("Resumen de Knowledge projection:")
+        print(
+            "  Agregar:    "
+            f"{knowledge_projection.added_count}"
+        )
+        print(
+            "  Actualizar: "
+            f"{knowledge_projection.modified_count}"
+        )
+        print(
+            "  Retirar:    "
+            f"{knowledge_projection.deleted_count}"
+        )
+        print(
+            "  Total:      "
+            f"{knowledge_projection.total_changes}"
+        )
+
     if knowledge is not None:
         print()
-        print("Resumen de Knowledge:")
+        print("Resumen de Knowledge remote:")
         print(f"  Agregar:          {knowledge.added}")
         print(f"  Modificar:        {knowledge.modified}")
         print(f"  Eliminar:         {knowledge.deleted}")
@@ -690,7 +742,7 @@ def print_plan(
 
 
 def run_plan() -> int:
-    """Compara Git con Open WebUI sin modificar recursos."""
+    """Compara el repositorio con el estado activo sin escribir."""
 
     try:
         config = Config()
@@ -699,6 +751,9 @@ def run_plan() -> int:
         knowledge_manager = build_knowledge_manager(config)
 
         projection_plan = projection_manager.plan()
+        knowledge_projection_result = (
+            knowledge_manager.plan_projection()
+        )
         knowledge_result = knowledge_manager.plan()
 
     except (
@@ -718,11 +773,11 @@ def run_plan() -> int:
 
     print_plan(
         projection_plan,
+        knowledge_projection_result,
         knowledge_result,
     )
 
     return 0
-
 
 def run_apply(confirmed: bool) -> int:
     """Aplica y verifica Projection con autorización explícita."""
@@ -796,16 +851,20 @@ def run_apply(confirmed: bool) -> int:
 
 def print_verification(
     plan: Plan,
+    knowledge_projection: KnowledgeProjectionDiffResult,
     knowledge: KnowledgeDiffResult,
 ) -> None:
-    """Muestra si Projection y Knowledge coinciden."""
+    """Muestra si todos los estados coinciden."""
 
     print("===================================")
     print("       EPSILON VERIFY")
     print("===================================\n")
 
     projection_verified = not plan.has_changes
-    knowledge_verified = (
+    knowledge_projection_verified = (
+        not knowledge_projection.has_changes
+    )
+    knowledge_remote_verified = (
         not knowledge.failed
         and not knowledge.has_changes
     )
@@ -822,21 +881,48 @@ def print_verification(
 
         for change in plan.changes:
             symbol = symbols[change.action]
-
-            print(
-                f"    {symbol} {change.summary}"
-            )
+            print(f"    {symbol} {change.summary}")
 
             for reason in change.reasons:
                 print(f"      - {reason}")
 
-    if knowledge_verified:
+    if knowledge_projection_verified:
         print(
-            "✓ Knowledge              "
+            "✓ Knowledge projection   "
+            "Estado verificado "
+            f"({knowledge_projection.unchanged_count} archivos)"
+        )
+    else:
+        print(
+            "✗ Knowledge projection   "
+            "No coincide con las fuentes canónicas"
+        )
+
+        for path in knowledge_projection.added:
+            print(f"    + Falta agregar:    {path}")
+
+        for path in knowledge_projection.modified:
+            print(f"    ~ Falta actualizar: {path}")
+
+        for path in knowledge_projection.deleted:
+            print(f"    - Archivo sobrante: {path}")
+
+        if knowledge_projection.has_removals:
+            print(
+                "    ! La reconstrucción retiraría "
+                "archivos de la proyección."
+            )
+
+    if knowledge_remote_verified:
+        print(
+            "✓ Knowledge remote       "
             f"Estado verificado ({knowledge.unmodified} archivos)"
         )
     else:
-        print("✗ Knowledge              No coincide con la proyección")
+        print(
+            "✗ Knowledge remote       "
+            "No coincide con la proyección local"
+        )
         print(f"    - Agregar archivos: {knowledge.added}")
         print(f"    - Modificar archivos: {knowledge.modified}")
         print(f"    - Eliminar archivos: {knowledge.deleted}")
@@ -860,7 +946,11 @@ def print_verification(
 
     print()
 
-    if projection_verified and knowledge_verified:
+    if (
+        projection_verified
+        and knowledge_projection_verified
+        and knowledge_remote_verified
+    ):
         print(
             "El estado activo de Projection y Knowledge "
             "coincide con el repositorio."
@@ -873,9 +963,8 @@ def print_verification(
 
     print("No se aplicaron cambios.")
 
-
 def run_verify() -> int:
-    """Verifica Projection y Knowledge sin modificar recursos."""
+    """Verifica todos los estados sin modificar recursos."""
 
     try:
         config = Config()
@@ -884,6 +973,9 @@ def run_verify() -> int:
         knowledge_manager = build_knowledge_manager(config)
 
         projection_plan = projection_manager.plan()
+        knowledge_projection_result = (
+            knowledge_manager.plan_projection()
+        )
         knowledge_result = knowledge_manager.plan()
 
     except (
@@ -903,11 +995,13 @@ def run_verify() -> int:
 
     print_verification(
         projection_plan,
+        knowledge_projection_result,
         knowledge_result,
     )
 
     if (
         projection_plan.has_changes
+        or knowledge_projection_result.has_changes
         or knowledge_result.failed
         or knowledge_result.has_changes
     ):

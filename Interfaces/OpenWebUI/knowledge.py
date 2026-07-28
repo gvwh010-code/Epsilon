@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,7 +8,10 @@ import subprocess
 from typing import Any
 
 from config import Config
-from results import KnowledgeDiffResult
+from results import (
+    KnowledgeDiffResult,
+    KnowledgeProjectionDiffResult,
+)
 from sync_module import SyncModule
 
 
@@ -36,6 +40,16 @@ class KnowledgeManager(SyncModule):
             self.project_root
             / "Interfaces"
             / "OpenWebUI"
+        )
+
+        self.projection_directory = (
+            interface_dir
+            / "knowledge_projection"
+        )
+
+        self.source_roots = (
+            "Core",
+            "Knowledge",
         )
 
         self.oikb_config_path = (
@@ -117,6 +131,160 @@ class KnowledgeManager(SyncModule):
             )
 
         return tuple(value)
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        """Calcula el SHA-256 de un archivo sin cargarlo entero."""
+
+        digest = hashlib.sha256()
+
+        with path.open("rb") as file:
+            for chunk in iter(
+                lambda: file.read(1024 * 1024),
+                b"",
+            ):
+                digest.update(chunk)
+
+        return digest.hexdigest()
+
+    def _tracked_source_paths(self) -> tuple[str, ...]:
+        """Obtiene desde Git los archivos canónicos de Knowledge."""
+
+        command = [
+            "git",
+            "ls-files",
+            "-z",
+            "--",
+            *self.source_roots,
+        ]
+
+        try:
+            result = subprocess.run(
+                command,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as error:
+            raise KnowledgeManagerError(
+                "No fue posible obtener el manifiesto "
+                "canónico desde Git."
+            ) from error
+
+        if result.returncode != 0:
+            detail = result.stderr.strip()
+
+            raise KnowledgeManagerError(
+                "Git no pudo obtener los archivos "
+                f"canónicos: {detail or result.returncode}"
+            )
+
+        relative_paths = tuple(
+            sorted(
+                path
+                for path in result.stdout.split("\0")
+                if path
+            )
+        )
+
+        if not relative_paths:
+            raise KnowledgeManagerError(
+                "Git no encontró archivos versionados "
+                "dentro de Core/ o Knowledge/."
+            )
+
+        for relative_path in relative_paths:
+            path = Path(relative_path)
+
+            if path.is_absolute() or ".." in path.parts:
+                raise KnowledgeManagerError(
+                    "Git devolvió una ruta canónica inválida: "
+                    f"{relative_path}"
+                )
+
+            source_path = self.project_root / path
+
+            if not source_path.is_file():
+                raise KnowledgeManagerError(
+                    "El archivo canónico registrado en Git "
+                    f"no existe localmente: {relative_path}"
+                )
+
+        return relative_paths
+
+    def _projection_paths(self) -> tuple[str, ...]:
+        """Obtiene los archivos presentes en la proyección local."""
+
+        if not self.projection_directory.is_dir():
+            return ()
+
+        return tuple(
+            sorted(
+                path.relative_to(
+                    self.projection_directory
+                ).as_posix()
+                for path in self.projection_directory.rglob("*")
+                if path.is_file()
+            )
+        )
+
+    def plan_projection(
+        self,
+    ) -> KnowledgeProjectionDiffResult:
+        """Compara las fuentes canónicas con la proyección local."""
+
+        source_paths = set(
+            self._tracked_source_paths()
+        )
+
+        projection_paths = set(
+            self._projection_paths()
+        )
+
+        added = tuple(
+            sorted(source_paths - projection_paths)
+        )
+
+        deleted = tuple(
+            sorted(projection_paths - source_paths)
+        )
+
+        modified: list[str] = []
+        unchanged: list[str] = []
+
+        for relative_path in sorted(
+            source_paths & projection_paths
+        ):
+            source_path = (
+                self.project_root
+                / relative_path
+            )
+
+            projected_path = (
+                self.projection_directory
+                / relative_path
+            )
+
+            if self._sha256(source_path) == self._sha256(
+                projected_path
+            ):
+                unchanged.append(relative_path)
+            else:
+                modified.append(relative_path)
+
+        return KnowledgeProjectionDiffResult(
+            added=added,
+            modified=tuple(modified),
+            deleted=deleted,
+            unchanged=tuple(unchanged),
+        )
 
     def _run_bridge(self) -> dict[str, Any]:
         """Ejecuta el adaptador con la credencial solo en el subproceso."""
