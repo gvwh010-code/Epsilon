@@ -15,8 +15,8 @@ from client import (
 
 from config import Config
 from ollama_client import OllamaClient, OllamaClientError
-from results import DiagnosticResult
-
+from projection import ProjectionManager
+from results import DiagnosticResult, Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INTERFACE_DIR = Path(__file__).resolve().parent
@@ -426,7 +426,7 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
                         summary=f"Disponible: {expected_model}",
                     )
                 )
-                
+
     return results
 
 
@@ -462,6 +462,74 @@ def run_doctor() -> int:
     print_diagnostics(results)
 
     return 1 if any(result.failed for result in results) else 0
+
+def print_plan(plan: Plan) -> None:
+    """Muestra los cambios propuestos sin aplicarlos."""
+
+    print("===================================")
+    print("        EPSILON PLAN")
+    print("===================================\n")
+
+    if not plan.has_changes:
+        print("✓ Projection             Sin cambios")
+    else:
+        symbols = {
+            "create": "+",
+            "update": "~",
+        }
+
+        for change in plan.changes:
+            symbol = symbols[change.action]
+
+            print(
+                f"{symbol} {change.component:<22} "
+                f"{change.summary}"
+            )
+
+            for reason in change.reasons:
+                print(f"    - {reason}")
+
+    print()
+    print("Resumen:")
+    print(f"  Crear:      {plan.create_count}")
+    print(f"  Actualizar: {plan.update_count}")
+    print(f"  Total:      {len(plan.changes)}")
+    print()
+    print("No se aplicaron cambios.")
+
+
+def run_plan() -> int:
+    """Compara Git con Open WebUI sin modificar ningún recurso."""
+
+    try:
+        config = Config()
+        client = OpenWebUIClient(config)
+
+        manager = ProjectionManager(
+            project_root=PROJECT_ROOT,
+            client=client,
+            model_id=config.openwebui_model,
+            base_model_id=config.ollama_model,
+        )
+
+        plan = manager.plan()
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        OpenWebUIClientError,
+    ) as error:
+        print("===================================")
+        print("        EPSILON PLAN")
+        print("===================================\n")
+        print(f"✗ No fue posible construir el plan: {error}")
+        print()
+        print("No se aplicaron cambios.")
+        return 1
+
+    print_plan(plan)
+    return 0
 
 
 def run_placeholder(command: str) -> int:
@@ -506,12 +574,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     arguments = parser.parse_args(argv)
 
-    if arguments.command is None:
-        parser.print_help()
-        return 0
-
     if arguments.command == "doctor":
         return run_doctor()
+
+    if arguments.command == "plan":
+        return run_plan()
 
     return run_placeholder(arguments.command)
 

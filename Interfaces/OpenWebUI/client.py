@@ -66,6 +66,25 @@ class OpenWebUIClient:
             if isinstance(model, dict)
         ]
 
+    def export_models(self) -> list[dict[str, Any]]:
+        """Exporta las definiciones de los modelos personalizados."""
+
+        payload = self.get("/api/v1/models/export")
+
+        if not isinstance(payload, list):
+            raise OpenWebUIClientError(
+                "Open WebUI devolvió un export de modelos inválido: "
+                "se esperaba una lista."
+            )
+
+        if not all(isinstance(model, dict) for model in payload):
+            raise OpenWebUIClientError(
+                "Open WebUI devolvió elementos inválidos "
+                "en el export de modelos."
+            )
+
+        return payload
+        
     def find_model(
         self,
         model_id: str,
