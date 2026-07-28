@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import stat
+import subprocess
 
 from pathlib import Path
 from shutil import which
@@ -90,7 +91,7 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
             INTERFACE_DIR / "EPSILON_PROJECTION.md",
         ),
         check_file(
-            "oikb configuration",
+            "oikb config file",
             PROJECT_ROOT / ".oikb.yaml",
         ),
     ]
@@ -116,15 +117,7 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
 
     oikb_executable = find_oikb()
 
-    if oikb_executable:
-        results.append(
-            DiagnosticResult(
-                component="oikb",
-                status="ok",
-                summary=f"Disponible: {oikb_executable}",
-            )
-        )
-    else:
+    if oikb_executable is None:
         results.append(
             DiagnosticResult(
                 component="oikb",
@@ -132,6 +125,120 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
                 summary="No se encontró el ejecutable",
             )
         )
+    else:
+        try:
+            version_result = subprocess.run(
+                [str(oikb_executable), "--version"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            results.append(
+                DiagnosticResult(
+                    component="oikb",
+                    status="error",
+                    summary=(
+                        "El ejecutable existe, pero no pudo iniciarse"
+                    ),
+                    details=(str(error),),
+                )
+            )
+        else:
+            version_output = (
+                version_result.stdout.strip()
+                or version_result.stderr.strip()
+            )
+
+            if version_result.returncode != 0:
+                results.append(
+                    DiagnosticResult(
+                        component="oikb",
+                        status="error",
+                        summary="El ejecutable devolvió un error",
+                        details=(
+                            version_output
+                            or (
+                                "Código de salida: "
+                                f"{version_result.returncode}"
+                            ),
+                        ),
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="oikb",
+                        status="ok",
+                        summary=(
+                            version_output
+                            or f"Ejecutable: {oikb_executable}"
+                        ),
+                    )
+                )
+
+                try:
+                    validate_result = subprocess.run(
+                        [
+                            str(oikb_executable),
+                            "validate",
+                        ],
+                        cwd=PROJECT_ROOT,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=30,
+                        check=False,
+                    )
+                except (
+                    OSError,
+                    subprocess.TimeoutExpired,
+                ) as error:
+                    results.append(
+                        DiagnosticResult(
+                            component="oikb configuration",
+                            status="error",
+                            summary=(
+                                "No fue posible ejecutar "
+                                "la validación"
+                            ),
+                            details=(str(error),),
+                        )
+                    )
+                else:
+                    validation_output = (
+                        validate_result.stdout.strip()
+                        or validate_result.stderr.strip()
+                    )
+
+                    if validate_result.returncode != 0:
+                        results.append(
+                            DiagnosticResult(
+                                component="oikb configuration",
+                                status="error",
+                                summary=".oikb.yaml no es válida",
+                                details=(
+                                    validation_output
+                                    or (
+                                        "Código de salida: "
+                                        f"{validate_result.returncode}"
+                                    ),
+                                ),
+                            )
+                        )
+                    else:
+                        results.append(
+                            DiagnosticResult(
+                                component="oikb configuration",
+                                status="ok",
+                                summary=".oikb.yaml validada",
+                            )
+                        )
 
     ollama_executable = which("ollama")
 
