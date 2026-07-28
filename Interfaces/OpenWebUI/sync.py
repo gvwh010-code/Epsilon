@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import stat
+
 from pathlib import Path
 from shutil import which
 from typing import Sequence
-from client import OpenWebUIClient, OpenWebUIClientError
+
+from client import (
+    OpenWebUIAuthenticationError,
+    OpenWebUIClient,
+    OpenWebUIClientError,
+)
+
 from config import Config
 from ollama_client import OllamaClient, OllamaClientError
 from results import DiagnosticResult
@@ -297,23 +305,128 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
             )
         )
 
-    if config.has_api_key:
+    credentials_path = config.credentials_path
+
+    if credentials_path.is_file():
+        try:
+            file_mode = stat.S_IMODE(
+                credentials_path.stat().st_mode
+            )
+            directory_mode = stat.S_IMODE(
+                credentials_path.parent.stat().st_mode
+            )
+        except OSError as error:
+            results.append(
+                DiagnosticResult(
+                    component="Credentials file",
+                    status="error",
+                    summary=f"No se pudieron revisar los permisos: {error}",
+                )
+            )
+        else:
+            if file_mode == 0o600 and directory_mode == 0o700:
+                results.append(
+                    DiagnosticResult(
+                        component="Credentials file",
+                        status="ok",
+                        summary="Presente y protegido",
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="Credentials file",
+                        status="warning",
+                        summary=(
+                            "Permisos esperados: carpeta 700, "
+                            "archivo 600"
+                        ),
+                        details=(
+                            f"Carpeta actual: {directory_mode:o}",
+                            f"Archivo actual: {file_mode:o}",
+                        ),
+                    )
+                )
+    else:
         results.append(
             DiagnosticResult(
-                component="Open WebUI API key",
-                status="ok",
-                summary="Configurada; valor oculto",
+                component="Credentials file",
+                status="warning",
+                summary=f"No encontrado: {credentials_path}",
             )
         )
-    else:
+
+    if not config.has_api_key:
         results.append(
             DiagnosticResult(
                 component="Open WebUI API key",
                 status="warning",
-                summary="No está configurada en este proceso",
+                summary="No está configurada",
             )
         )
 
+    else:
+        try:
+            models = client.list_models()
+
+        except OpenWebUIAuthenticationError as error:
+            results.append(
+                DiagnosticResult(
+                    component="Open WebUI API key",
+                    status="error",
+                    summary=str(error),
+                )
+            )
+
+        except OpenWebUIClientError as error:
+            results.append(
+                DiagnosticResult(
+                    component="Open WebUI API",
+                    status="error",
+                    summary=str(error),
+                )
+            )
+
+        else:
+            results.append(
+                DiagnosticResult(
+                    component="Open WebUI API key",
+                    status="ok",
+                    summary="Aceptada por Open WebUI",
+                )
+            )
+
+            results.append(
+                DiagnosticResult(
+                    component="Open WebUI models",
+                    status="ok",
+                    summary=f"{len(models)} modelos visibles",
+                )
+            )
+
+            expected_model = config.openwebui_model
+            model = client.find_model(
+                expected_model,
+                models=models,
+            )
+
+            if model is None:
+                results.append(
+                    DiagnosticResult(
+                        component="Epsilon model",
+                        status="error",
+                        summary=f"No encontrado: {expected_model}",
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="Epsilon model",
+                        status="ok",
+                        summary=f"Disponible: {expected_model}",
+                    )
+                )
+                
     return results
 
 

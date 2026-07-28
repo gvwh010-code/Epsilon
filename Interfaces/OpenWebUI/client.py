@@ -38,6 +38,59 @@ class OpenWebUIClient:
             expect_json=True,
         )
 
+    def list_models(self) -> list[dict[str, Any]]:
+        """Lista los modelos visibles para la API key."""
+
+        payload = self.get("/api/models")
+
+        if isinstance(payload, list):
+            models = payload
+
+        elif isinstance(payload, dict):
+            models = payload.get("data")
+
+            if models is None:
+                models = payload.get("models")
+
+        else:
+            models = None
+
+        if not isinstance(models, list):
+            raise OpenWebUIClientError(
+                "Open WebUI devolvió una lista de modelos inválida."
+            )
+
+        return [
+            model
+            for model in models
+            if isinstance(model, dict)
+        ]
+
+    def find_model(
+        self,
+        model_id: str,
+        models: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Busca un modelo por su identificador canónico."""
+
+        available_models = (
+            models
+            if models is not None
+            else self.list_models()
+        )
+
+        for model in available_models:
+            identifiers = {
+                model.get("id"),
+                model.get("model"),
+                model.get("name"),
+            }
+
+            if model_id in identifiers:
+                return model
+
+        return None
+        
     def post(self, endpoint: str, payload: dict[str, Any]) -> Any:
         return self._request(
             method="POST",
