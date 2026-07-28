@@ -84,7 +84,52 @@ class OpenWebUIClient:
             )
 
         return payload
-        
+
+    def import_models(
+        self,
+        models: list[dict[str, Any]],
+    ) -> None:
+        """Crea o actualiza modelos mediante la importación aditiva."""
+
+        if not models:
+            raise ValueError(
+                "La importación necesita al menos un modelo."
+            )
+
+        model_ids: list[str] = []
+
+        for index, model in enumerate(models):
+            if not isinstance(model, dict):
+                raise ValueError(
+                    f"El modelo en la posición {index} no es un objeto."
+                )
+
+            model_id = model.get("id")
+
+            if not isinstance(model_id, str) or not model_id.strip():
+                raise ValueError(
+                    f"El modelo en la posición {index} no tiene un id válido."
+                )
+
+            model_ids.append(model_id)
+
+        if len(model_ids) != len(set(model_ids)):
+            raise ValueError(
+                "La importación contiene identificadores duplicados."
+            )
+
+        result = self.post(
+            "/api/v1/models/import",
+            {
+                "models": models,
+            },
+        )
+
+        if result is not True:
+            raise OpenWebUIClientError(
+                "Open WebUI no confirmó la importación de modelos."
+            )
+
     def find_model(
         self,
         model_id: str,
