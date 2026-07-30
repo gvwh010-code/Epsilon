@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -11,9 +12,15 @@ import tempfile
 from typing import Any, Iterator
 
 from config import Config
-from results import KnowledgeDiffResult
+
+from results import (
+    KnowledgeAddedFile,
+    KnowledgeDeletedFile,
+    KnowledgeDiffResult,
+    KnowledgeModifiedFile,
+)
+
 from sync_module import SyncModule
-from dataclasses import dataclass
 
 from knowledge_target import (
     KnowledgeSlot,
@@ -223,6 +230,139 @@ class KnowledgeManager(SyncModule):
             )
 
         return tuple(value)
+
+    @staticmethod
+    def _read_digest(
+        payload: dict[str, Any],
+        key: str,
+    ) -> str:
+        """Lee una huella SHA-256 devuelta por el puente."""
+
+        value = payload.get(key)
+        hexadecimal = set(
+            "0123456789abcdefABCDEF"
+        )
+
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(
+                character not in hexadecimal
+                for character in value
+            )
+        ):
+            raise KnowledgeManagerError(
+                f"El campo '{key}' no contiene "
+                "una huella SHA-256 válida."
+            )
+
+        return value
+
+    @staticmethod
+    def _read_exact_entries(
+        payload: dict[str, Any],
+        key: str,
+        expected_fields: tuple[str, ...],
+    ) -> tuple[dict[str, str], ...]:
+        """Lee una lista exacta de objetos textuales."""
+
+        value = payload.get(key)
+
+        if not isinstance(value, list):
+            raise KnowledgeManagerError(
+                f"El campo '{key}' devuelto por oikb "
+                "no es una lista válida."
+            )
+
+        entries: list[dict[str, str]] = []
+
+        for index, item in enumerate(value):
+            if (
+                not isinstance(item, dict)
+                or set(item) != set(expected_fields)
+            ):
+                raise KnowledgeManagerError(
+                    f"El elemento {key}[{index}] no contiene "
+                    "exactamente los campos esperados."
+                )
+
+            entry: dict[str, str] = {}
+
+            for field_name in expected_fields:
+                field_value = item.get(field_name)
+
+                if not isinstance(field_value, str):
+                    raise KnowledgeManagerError(
+                        f"El campo {key}[{index}].{field_name} "
+                        "no es texto."
+                    )
+
+                if (
+                    field_name != "path"
+                    and not field_value.strip()
+                ):
+                    raise KnowledgeManagerError(
+                        f"El campo {key}[{index}].{field_name} "
+                        "está vacío."
+                    )
+
+                entry[field_name] = field_value
+
+            entries.append(entry)
+
+        return tuple(entries)
+
+    @staticmethod
+    def _read_string_items(
+        payload: dict[str, Any],
+        key: str,
+    ) -> tuple[str, ...]:
+        """Lee una lista de textos no vacíos."""
+
+        value = payload.get(key)
+
+        if (
+            not isinstance(value, list)
+            or not all(
+                isinstance(item, str)
+                and bool(item.strip())
+                for item in value
+            )
+        ):
+            raise KnowledgeManagerError(
+                f"El campo '{key}' devuelto por oikb "
+                "no es una lista de textos válida."
+            )
+
+        return tuple(value)
+
+    @staticmethod
+    def _read_directory_map(
+        payload: dict[str, Any],
+    ) -> tuple[tuple[str, str], ...]:
+        """Lee el mapa estable de rutas e IDs remotos."""
+
+        value = payload.get("directory_map")
+
+        if (
+            not isinstance(value, dict)
+            or not all(
+                isinstance(path, str)
+                and isinstance(directory_id, str)
+                and bool(directory_id.strip())
+                for path, directory_id in value.items()
+            )
+        ):
+            raise KnowledgeManagerError(
+                "El campo 'directory_map' devuelto por oikb "
+                "no es válido."
+            )
+
+        return tuple(
+            sorted(
+                value.items()
+            )
+        )
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -616,12 +756,57 @@ class KnowledgeManager(SyncModule):
                 f"del slot {slot_role}."
             )
 
+        added_entries = self._read_exact_entries(
+            payload,
+            "added_files",
+            (
+                "filename",
+                "path",
+            ),
+        )
+
+        modified_entries = self._read_exact_entries(
+            payload,
+            "modified_files",
+            (
+                "filename",
+                "path",
+                "stale_file_id",
+            ),
+        )
+
+        deleted_entries = self._read_exact_entries(
+            payload,
+            "deleted_files",
+            (
+                "file_id",
+                "filename",
+            ),
+        )
+
         return KnowledgeDiffResult(
             source_name=source_name,
             kb_id=kb_id,
-            added=self._read_counter(payload, "added"),
-            modified=self._read_counter(payload, "modified"),
-            deleted=self._read_counter(payload, "deleted"),
+            manifest_digest=self._read_digest(
+                payload,
+                "manifest_digest",
+            ),
+            diff_digest=self._read_digest(
+                payload,
+                "diff_digest",
+            ),
+            added=self._read_counter(
+                payload,
+                "added",
+            ),
+            modified=self._read_counter(
+                payload,
+                "modified",
+            ),
+            deleted=self._read_counter(
+                payload,
+                "deleted",
+            ),
             unmodified=self._read_counter(
                 payload,
                 "unmodified",
@@ -633,6 +818,47 @@ class KnowledgeManager(SyncModule):
             dirs_removed=self._read_counter(
                 payload,
                 "dirs_removed",
+            ),
+            added_files=tuple(
+                KnowledgeAddedFile(
+                    path=entry["path"],
+                    filename=entry["filename"],
+                )
+                for entry in added_entries
+            ),
+            modified_files=tuple(
+                KnowledgeModifiedFile(
+                    path=entry["path"],
+                    filename=entry["filename"],
+                    stale_file_id=entry[
+                        "stale_file_id"
+                    ],
+                )
+                for entry in modified_entries
+            ),
+            deleted_files=tuple(
+                KnowledgeDeletedFile(
+                    filename=entry["filename"],
+                    file_id=entry["file_id"],
+                )
+                for entry in deleted_entries
+            ),
+            directories_to_create=(
+                self._read_string_items(
+                    payload,
+                    "directories_to_create",
+                )
+            ),
+            directory_ids_to_remove=(
+                self._read_string_items(
+                    payload,
+                    "directory_ids_to_remove",
+                )
+            ),
+            directory_map=(
+                self._read_directory_map(
+                    payload
+                )
             ),
             warnings=self._read_messages(
                 payload,
