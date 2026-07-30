@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stderr, redirect_stdout
-import io
 import json
 import os
+import hashlib
 from pathlib import Path
 from typing import Any
 from oikb.client import OikbClient
 from oikb.connectors.filesystem import FilesystemConnector
-from oikb.sync import SyncResult, run_sync
 
 
 def require_environment(name: str) -> str:
@@ -25,48 +23,330 @@ def require_environment(name: str) -> str:
     return value
 
 
-def ensure_non_empty_source(source_path: Path) -> None:
-    """Rechaza una fuente sin archivos sincronizables."""
+def canonical_digest(value: Any) -> str:
+    """Calcula una huella SHA-256 sobre JSON canónico."""
 
-    connector = FilesystemConnector(source_path)
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return hashlib.sha256(
+        serialized
+    ).hexdigest()
+
+
+def build_source_manifest(
+    source_path: Path,
+) -> tuple[list[dict[str, Any]], str]:
+    """Construye el manifiesto ordenado de la fuente temporal."""
+
+    connector = FilesystemConnector(
+        source_path
+    )
 
     try:
-        manifest = connector.build_manifest()
+        entries = connector.build_manifest()
     finally:
         connector.close()
 
-    if not manifest:
+    if not entries:
         raise RuntimeError(
             "La fuente Knowledge no contiene archivos "
             "sincronizables; se rechaza la comparación "
             "para evitar un falso estado limpio."
         )
 
-def result_to_dict(result: SyncResult) -> dict[str, Any]:
-    """Convierte SyncResult en datos JSON estables."""
+    manifest = [
+        entry.to_dict()
+        for entry in entries
+    ]
 
-    directory_changes = (
-        result.dirs_created
-        + result.dirs_removed
+    return (
+        manifest,
+        canonical_digest(manifest),
+    )
+
+
+def require_entry_text(
+    entry: dict[str, Any],
+    field_name: str,
+    *,
+    context: str,
+    allow_empty: bool = False,
+) -> str:
+    """Valida un texto recibido desde sync/diff."""
+
+    value = entry.get(field_name)
+
+    if not isinstance(value, str):
+        raise RuntimeError(
+            f"{context} contiene un {field_name} inválido."
+        )
+
+    if not allow_empty and not value.strip():
+        raise RuntimeError(
+            f"{context} contiene un {field_name} vacío."
+        )
+
+    return value
+
+
+def normalize_entries(
+    diff: dict[str, Any],
+    field_name: str,
+    expected_fields: tuple[str, ...],
+) -> list[dict[str, str]]:
+    """Valida y normaliza una lista de cambios de archivos."""
+
+    value = diff.get(field_name)
+
+    if not isinstance(value, list):
+        raise RuntimeError(
+            f"sync/diff devolvió un campo {field_name} inválido."
+        )
+
+    normalized: list[dict[str, str]] = []
+
+    for index, entry in enumerate(value):
+        context = (
+            f"{field_name}[{index}]"
+        )
+
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"{context} no es un objeto."
+            )
+
+        if set(entry) != set(expected_fields):
+            raise RuntimeError(
+                f"{context} no contiene exactamente "
+                f"los campos esperados: "
+                + ", ".join(expected_fields)
+            )
+
+        normalized_entry: dict[str, str] = {}
+
+        for expected_field in expected_fields:
+            normalized_entry[expected_field] = (
+                require_entry_text(
+                    entry,
+                    expected_field,
+                    context=context,
+                    allow_empty=(
+                        expected_field == "path"
+                    ),
+                )
+            )
+
+        normalized.append(
+            normalized_entry
+        )
+
+    return normalized
+
+
+def normalize_string_list(
+    diff: dict[str, Any],
+    field_name: str,
+) -> list[str]:
+    """Valida una lista de rutas o identificadores."""
+
+    value = diff.get(field_name)
+
+    if (
+        not isinstance(value, list)
+        or not all(
+            isinstance(item, str)
+            and bool(item.strip())
+            for item in value
+        )
+    ):
+        raise RuntimeError(
+            f"sync/diff devolvió un campo {field_name} inválido."
+        )
+
+    return list(value)
+
+
+def normalize_sync_diff(
+    diff: Any,
+    *,
+    manifest_digest: str,
+) -> dict[str, Any]:
+    """Convierte sync/diff en un plan JSON exacto y estable."""
+
+    if not isinstance(diff, dict):
+        raise RuntimeError(
+            "sync/diff no devolvió un objeto JSON."
+        )
+
+    added_files = normalize_entries(
+        diff,
+        "added",
+        (
+            "filename",
+            "path",
+        ),
+    )
+
+    modified_files = normalize_entries(
+        diff,
+        "modified",
+        (
+            "filename",
+            "path",
+            "stale_file_id",
+        ),
+    )
+
+    deleted_files = normalize_entries(
+        diff,
+        "deleted",
+        (
+            "file_id",
+            "filename",
+        ),
+    )
+
+    directories_to_create = (
+        normalize_string_list(
+            diff,
+            "mkdir",
+        )
+    )
+
+    directory_ids_to_remove = (
+        normalize_string_list(
+            diff,
+            "rmdir",
+        )
+    )
+
+    unmodified = diff.get(
+        "unmodified_count"
+    )
+
+    if (
+        isinstance(unmodified, bool)
+        or not isinstance(unmodified, int)
+        or unmodified < 0
+    ):
+        raise RuntimeError(
+            "sync/diff devolvió un "
+            "unmodified_count inválido."
+        )
+
+    directory_map = diff.get(
+        "directory_map"
+    )
+
+    if (
+        not isinstance(directory_map, dict)
+        or not all(
+            isinstance(path, str)
+            and isinstance(directory_id, str)
+            and bool(directory_id.strip())
+            for path, directory_id
+            in directory_map.items()
+        )
+    ):
+        raise RuntimeError(
+            "sync/diff devolvió un directory_map inválido."
+        )
+
+    added_files.sort(
+        key=lambda item: (
+            item["path"],
+            item["filename"],
+        )
+    )
+
+    modified_files.sort(
+        key=lambda item: (
+            item["path"],
+            item["filename"],
+            item["stale_file_id"],
+        )
+    )
+
+    deleted_files.sort(
+        key=lambda item: (
+            item["filename"],
+            item["file_id"],
+        )
+    )
+
+    directories_to_create.sort(
+        key=lambda path: (
+            path.count("/"),
+            path,
+        )
+    )
+
+    directory_ids_to_remove.sort()
+
+    normalized_directory_map = dict(
+        sorted(
+            directory_map.items()
+        )
+    )
+
+    exact_diff = {
+        "added_files": added_files,
+        "modified_files": modified_files,
+        "deleted_files": deleted_files,
+        "directories_to_create": (
+            directories_to_create
+        ),
+        "directory_ids_to_remove": (
+            directory_ids_to_remove
+        ),
+        "directory_map": (
+            normalized_directory_map
+        ),
+        "unmodified": unmodified,
+    }
+
+    added = len(added_files)
+    modified = len(modified_files)
+    deleted = len(deleted_files)
+    dirs_created = len(
+        directories_to_create
+    )
+    dirs_removed = len(
+        directory_ids_to_remove
     )
 
     return {
-        "ok": not bool(result.errors),
-        "added": result.added,
-        "modified": result.modified,
-        "deleted": result.deleted,
-        "unmodified": result.unmodified,
-        "dirs_created": result.dirs_created,
-        "dirs_removed": result.dirs_removed,
-        "file_changes": result.total_changes,
-        "total_changes": (
-            result.total_changes
-            + directory_changes
+        "ok": True,
+        "manifest_digest": manifest_digest,
+        "diff_digest": canonical_digest(
+            exact_diff
         ),
-        "warnings": list(result.warnings or []),
-        "errors": list(result.errors or []),
+        **exact_diff,
+        "added": added,
+        "modified": modified,
+        "deleted": deleted,
+        "dirs_created": dirs_created,
+        "dirs_removed": dirs_removed,
+        "file_changes": (
+            added
+            + modified
+            + deleted
+        ),
+        "total_changes": (
+            added
+            + modified
+            + deleted
+            + dirs_created
+            + dirs_removed
+        ),
+        "warnings": [],
+        "errors": [],
     }
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -135,7 +415,11 @@ def main() -> int:
                 f"un directorio: {source_path}"
             )
 
-        ensure_non_empty_source(source_path)
+        manifest, manifest_digest = (
+            build_source_manifest(
+                source_path
+            )
+        )
 
         base_url = require_environment(
             "OPEN_WEBUI_URL"
@@ -151,26 +435,18 @@ def main() -> int:
             timeout=arguments.timeout,
         )
 
-        connector = FilesystemConnector(source_path)
-
-        hidden_stdout = io.StringIO()
-        hidden_stderr = io.StringIO()
-
         try:
-            with (
-                redirect_stdout(hidden_stdout),
-                redirect_stderr(hidden_stderr),
-            ):
-                result = run_sync(
-                    client=client,
-                    connector=connector,
-                    kb_id=kb_id,
-                    dry_run=True,
-                    verbose=False,
-                    quiet=True,
-                )
+            diff = client.sync_diff(
+                kb_id,
+                manifest,
+            )
         finally:
             client.close()
+
+        normalized_diff = normalize_sync_diff(
+            diff,
+            manifest_digest=manifest_digest,
+        )
 
     except Exception as error:
         print(
@@ -187,7 +463,7 @@ def main() -> int:
     payload = {
         "source_name": source_name,
         "kb_id": kb_id,
-        **result_to_dict(result),
+        **normalized_diff,
     }
 
     print(
