@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from oikb.client import OikbClient
 from oikb.connectors.filesystem import FilesystemConnector
+from oikb.sync import run_sync
 
 
 def require_environment(name: str) -> str:
@@ -348,14 +349,110 @@ def normalize_sync_diff(
         "errors": [],
     }
 
+
+def normalize_sync_result(
+    result: Any,
+    *,
+    manifest_digest: str,
+) -> dict[str, Any]:
+    """Convierte SyncResult en un resultado JSON estable."""
+
+    counters: dict[str, int] = {}
+
+    for field_name in (
+        "added",
+        "modified",
+        "deleted",
+        "unmodified",
+        "dirs_created",
+        "dirs_removed",
+    ):
+        value = getattr(
+            result,
+            field_name,
+            None,
+        )
+
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise RuntimeError(
+                f"run_sync devolvió un contador "
+                f"{field_name} inválido."
+            )
+
+        counters[field_name] = value
+
+    def read_messages(
+        field_name: str,
+    ) -> list[str]:
+        value = getattr(
+            result,
+            field_name,
+            None,
+        )
+
+        if value is None:
+            return []
+
+        if (
+            not isinstance(value, list)
+            or not all(
+                isinstance(message, str)
+                and bool(message.strip())
+                for message in value
+            )
+        ):
+            raise RuntimeError(
+                f"run_sync devolvió un campo "
+                f"{field_name} inválido."
+            )
+
+        return list(value)
+
+    warnings = read_messages(
+        "warnings"
+    )
+    errors = read_messages(
+        "errors"
+    )
+
+    file_changes = (
+        counters["added"]
+        + counters["modified"]
+        + counters["deleted"]
+    )
+
+    directory_changes = (
+        counters["dirs_created"]
+        + counters["dirs_removed"]
+    )
+
+    return {
+        "ok": not errors,
+        "manifest_digest": manifest_digest,
+        **counters,
+        "file_changes": file_changes,
+        "directory_changes": directory_changes,
+        "total_changes": (
+            file_changes
+            + directory_changes
+        ),
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Adaptador JSON de solo lectura para oikb."
+        description="Adaptador JSON controlado para oikb."
     )
 
     parser.add_argument(
         "command",
-        choices=("diff",),
+        choices=("diff", "sync"),
         help="Operación permitida.",
     )
 
@@ -436,17 +533,37 @@ def main() -> int:
         )
 
         try:
-            diff = client.sync_diff(
-                kb_id,
-                manifest,
-            )
+            if arguments.command == "diff":
+                diff = client.sync_diff(
+                    kb_id,
+                    manifest,
+                )
+
+                normalized_result = normalize_sync_diff(
+                    diff,
+                    manifest_digest=manifest_digest,
+                )
+            else:
+                connector = FilesystemConnector(
+                    source_path
+                )
+
+                sync_result = run_sync(
+                    client=client,
+                    connector=connector,
+                    kb_id=kb_id,
+                    dry_run=False,
+                    verbose=False,
+                    quiet=True,
+                    concurrency=1,
+                )
+
+                normalized_result = normalize_sync_result(
+                    sync_result,
+                    manifest_digest=manifest_digest,
+                )
         finally:
             client.close()
-
-        normalized_diff = normalize_sync_diff(
-            diff,
-            manifest_digest=manifest_digest,
-        )
 
     except Exception as error:
         print(
@@ -461,9 +578,10 @@ def main() -> int:
         return 1
 
     payload = {
+        "command": arguments.command,
         "source_name": source_name,
         "kb_id": kb_id,
-        **normalized_diff,
+        **normalized_result,
     }
 
     print(
