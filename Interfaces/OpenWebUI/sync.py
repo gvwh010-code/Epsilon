@@ -16,7 +16,13 @@ from client import (
 )
 
 from config import Config
-from knowledge import KnowledgeManager, KnowledgeManagerError
+
+from knowledge import (
+    KnowledgeCandidatePlan,
+    KnowledgeManager,
+    KnowledgeManagerError,
+)
+
 from knowledge_target import (
     KnowledgeTargetError,
     load_knowledge_target,
@@ -659,24 +665,100 @@ def print_plan(
         print(footer)
 
 
-def run_plan() -> int:
-    """Compara el repositorio con el estado activo sin escribir."""
+def print_candidate_plan(
+    plan: KnowledgeCandidatePlan,
+) -> None:
+    """Muestra el plan de preparación del slot inactivo."""
+
+    diff = plan.diff
+
+    print("===================================")
+    print("   EPSILON KNOWLEDGE CANDIDATE")
+    print("===================================\n")
+
+    print("Slot activo:")
+    print(f"  Nombre: {plan.active_slot.name}")
+    print(f"  KB ID:  {plan.active_slot.kb_id}")
+
+    print()
+    print("Slot candidato:")
+    print(f"  Nombre: {plan.candidate_slot.name}")
+    print(f"  KB ID:  {plan.candidate_slot.kb_id}")
+
+    print()
+
+    if not diff.has_changes:
+        print(
+            "✓ El slot candidato ya coincide "
+            "con los archivos autorizados."
+        )
+    else:
+        print(
+            "~ El slot candidato debe prepararse "
+            "antes del intercambio."
+        )
+
+        print(f"    - Agregar archivos: {diff.added}")
+        print(f"    - Modificar archivos: {diff.modified}")
+        print(f"    - Eliminar archivos: {diff.deleted}")
+        print(f"    - Crear carpetas: {diff.dirs_created}")
+        print(f"    - Retirar carpetas: {diff.dirs_removed}")
+
+        if diff.has_destructive_changes:
+            print(
+                "    ! La preparación contiene operaciones "
+                "destructivas sobre el slot inactivo."
+            )
+
+    for warning in diff.warnings:
+        print(f"    ! {warning}")
+
+    print()
+    print("Resumen de Knowledge candidata:")
+    print(f"  Agregar:          {diff.added}")
+    print(f"  Modificar:        {diff.modified}")
+    print(f"  Eliminar:         {diff.deleted}")
+    print(f"  Carpetas crear:   {diff.dirs_created}")
+    print(f"  Carpetas retirar: {diff.dirs_removed}")
+    print(f"  Sin cambios:      {diff.unmodified}")
+    print(f"  Total:            {diff.total_changes}")
+
+    print()
+    print("No se aplicaron cambios.")
+
+def run_plan(
+    candidate: bool = False,
+) -> int:
+    """Compara el repositorio sin escribir en Open WebUI."""
 
     try:
         config = Config()
 
         with OpenWebUIClient(config) as client:
-            projection_manager = build_projection_manager(
-                config,
-                client,
-            )
             knowledge_manager = build_knowledge_manager(
                 config,
                 client,
             )
 
-            projection_plan = projection_manager.plan()
-            knowledge_result = knowledge_manager.plan()
+            if candidate:
+                candidate_plan = (
+                    knowledge_manager.plan_candidate()
+                )
+            else:
+                projection_manager = (
+                    build_projection_manager(
+                        config,
+                        client,
+                    )
+                )
+
+                projection_plan = (
+                    projection_manager.plan()
+                )
+
+                knowledge_result = (
+                    knowledge_manager.plan()
+                )
 
     except (
         FileNotFoundError,
@@ -693,10 +775,15 @@ def run_plan() -> int:
         print("No se aplicaron cambios.")
         return 1
 
-    print_plan(
-        projection_plan,
-        knowledge_result,
-    )
+    if candidate:
+        print_candidate_plan(
+            candidate_plan
+        )
+    else:
+        print_plan(
+            projection_plan,
+            knowledge_result,
+        )
 
     return 0
 
@@ -923,9 +1010,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comprueba dependencias y configuración.",
     )
 
-    subparsers.add_parser(
+    plan_parser = subparsers.add_parser(
         "plan",
-        help="Compara el estado deseado y el estado activo.",
+        help="Compara el estado deseado con Open WebUI.",
+    )
+
+    plan_parser.add_argument(
+        "--candidate",
+        action="store_true",
+        help=(
+            "Compara Knowledge con el slot "
+            "Blue–Green inactivo."
+        ),
     )
 
     apply_parser = subparsers.add_parser(
@@ -958,7 +1054,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_doctor()
 
     if arguments.command == "plan":
-        return run_plan()
+        return run_plan(
+            arguments.candidate
+        )
 
     if arguments.command == "apply":
         return run_apply(arguments.yes)
