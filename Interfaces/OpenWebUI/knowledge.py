@@ -304,6 +304,58 @@ class KnowledgeManager(SyncModule):
                 + ", ".join(untracked_paths)
             )
 
+    def _validate_manifest_source(
+        self,
+        relative_path: Path,
+        normalized: str,
+    ) -> None:
+        """Valida que la entrada sea un archivo regular interno."""
+
+        source_path = (
+            self.project_root
+            / relative_path
+        )
+
+        current_path = self.project_root
+
+        for part in relative_path.parts:
+            current_path = current_path / part
+
+            if current_path.is_symlink():
+                raise KnowledgeManagerError(
+                    "El manifiesto no puede publicar enlaces "
+                    f"simbólicos: {normalized}"
+                )
+
+        try:
+            resolved_path = source_path.resolve(
+                strict=True
+            )
+        except FileNotFoundError as error:
+            raise KnowledgeManagerError(
+                "El archivo declarado en el manifiesto "
+                f"no existe: {normalized}"
+            ) from error
+        except OSError as error:
+            raise KnowledgeManagerError(
+                "No fue posible resolver la ruta declarada "
+                f"en el manifiesto: {normalized}"
+            ) from error
+
+        if not resolved_path.is_relative_to(
+            self.project_root
+        ):
+            raise KnowledgeManagerError(
+                "La ruta declarada escapa del repositorio: "
+                f"{normalized}"
+            )
+
+        if not resolved_path.is_file():
+            raise KnowledgeManagerError(
+                "La entrada del manifiesto no es un archivo "
+                f"regular: {normalized}"
+            )
+
     def _manifest_paths(self) -> tuple[str, ...]:
         """Lee y valida los archivos autorizados para Knowledge."""
 
@@ -344,13 +396,10 @@ class KnowledgeManager(SyncModule):
                     f"{normalized}"
                 )
 
-            source_path = self.project_root / path
-
-            if not source_path.is_file():
-                raise KnowledgeManagerError(
-                    "El archivo declarado en el manifiesto "
-                    f"no existe: {normalized}"
-                )
+            self._validate_manifest_source(
+                path,
+                normalized,
+            )
 
             relative_paths.append(normalized)
 
