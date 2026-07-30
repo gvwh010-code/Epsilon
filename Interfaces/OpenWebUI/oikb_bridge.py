@@ -98,12 +98,6 @@ def load_source_entry(
 
     source_path = source_path.resolve()
 
-    if not source_path.is_dir():
-        raise RuntimeError(
-            "La fuente local no existe o no es un directorio: "
-            f"{source_path}"
-        )
-
     return source_path, kb_id.strip()
 
 def ensure_non_empty_source(source_path: Path) -> None:
@@ -173,6 +167,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--source",
+        help=(
+            "Ruta opcional que reemplaza temporalmente "
+            "la fuente declarada en el YAML."
+        ),
+    )
+
+    parser.add_argument(
         "--timeout",
         type=float,
         default=120.0,
@@ -195,6 +197,17 @@ def main() -> int:
             config_path=config_path,
             source_name=arguments.name,
         )
+
+        if arguments.source:
+            source_path = Path(
+                arguments.source
+            ).expanduser().resolve()
+
+        if not source_path.is_dir():
+            raise RuntimeError(
+                "La fuente seleccionada no existe o no es "
+                f"un directorio: {source_path}"
+            )
 
         ensure_non_empty_source(source_path)
 

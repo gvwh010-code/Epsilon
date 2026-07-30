@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
-from typing import Any
+import tempfile
+from typing import Any, Iterator
 
 from config import Config
 from results import (
@@ -13,7 +16,6 @@ from results import (
     KnowledgeProjectionDiffResult,
 )
 from sync_module import SyncModule
-
 
 class KnowledgeManagerError(RuntimeError):
     """Error controlado al comparar Knowledge mediante oikb."""
@@ -40,6 +42,11 @@ class KnowledgeManager(SyncModule):
             self.project_root
             / "Interfaces"
             / "OpenWebUI"
+        )
+
+        self.manifest_path = (
+            interface_dir
+            / "knowledge_manifest.txt"
         )
 
         self.projection_directory = (
@@ -94,6 +101,11 @@ class KnowledgeManager(SyncModule):
                 f"No se encontró: {self.oikb_config_path}"
             )
 
+        if not self.manifest_path.is_file():
+            raise FileNotFoundError(
+                f"No se encontró el manifiesto: {self.manifest_path}"
+            )
+
     @staticmethod
     def _read_counter(
         payload: dict[str, Any],
@@ -146,6 +158,135 @@ class KnowledgeManager(SyncModule):
                 digest.update(chunk)
 
         return digest.hexdigest()
+
+    def _manifest_paths(self) -> tuple[str, ...]:
+        """Lee y valida los archivos autorizados para Knowledge."""
+
+        try:
+            lines = self.manifest_path.read_text(
+                encoding="utf-8"
+            ).splitlines()
+        except OSError as error:
+            raise KnowledgeManagerError(
+                "No fue posible leer el manifiesto de Knowledge."
+            ) from error
+
+        relative_paths: list[str] = []
+
+        for line_number, raw_line in enumerate(lines, start=1):
+            value = raw_line.strip()
+
+            if not value or value.startswith("#"):
+                continue
+
+            path = Path(value)
+
+            if path.is_absolute() or ".." in path.parts:
+                raise KnowledgeManagerError(
+                    "Ruta inválida en el manifiesto, "
+                    f"línea {line_number}: {value}"
+                )
+
+            normalized = path.as_posix()
+
+            if not (
+                normalized.startswith("Core/")
+                or normalized.startswith("Knowledge/")
+            ):
+                raise KnowledgeManagerError(
+                    "El manifiesto solo puede publicar archivos "
+                    "de Core/ o Knowledge/: "
+                    f"{normalized}"
+                )
+
+            source_path = self.project_root / path
+
+            if not source_path.is_file():
+                raise KnowledgeManagerError(
+                    "El archivo declarado en el manifiesto "
+                    f"no existe: {normalized}"
+                )
+
+            relative_paths.append(normalized)
+
+        if not relative_paths:
+            raise KnowledgeManagerError(
+                "El manifiesto de Knowledge está vacío."
+            )
+
+        duplicates = sorted(
+            {
+                path
+                for path in relative_paths
+                if relative_paths.count(path) > 1
+            }
+        )
+
+        if duplicates:
+            raise KnowledgeManagerError(
+                "El manifiesto contiene rutas duplicadas: "
+                + ", ".join(duplicates)
+            )
+
+        return tuple(relative_paths)
+
+    @contextmanager
+    def staged_source(self) -> Iterator[Path]:
+        """Construye una copia temporal validada de Knowledge."""
+
+        relative_paths = self._manifest_paths()
+
+        with tempfile.TemporaryDirectory(
+            prefix="epsilon-knowledge-"
+        ) as temporary_directory:
+            staging_directory = Path(temporary_directory)
+
+            for relative_path in relative_paths:
+                source_path = (
+                    self.project_root
+                    / relative_path
+                )
+
+                staged_path = (
+                    staging_directory
+                    / relative_path
+                )
+
+                staged_path.parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+                shutil.copyfile(
+                    source_path,
+                    staged_path,
+                )
+
+                if self._sha256(source_path) != self._sha256(
+                    staged_path
+                ):
+                    raise KnowledgeManagerError(
+                        "La copia temporal no coincide con "
+                        f"su fuente: {relative_path}"
+                    )
+
+            staged_paths = tuple(
+                sorted(
+                    path.relative_to(
+                        staging_directory
+                    ).as_posix()
+                    for path in staging_directory.rglob("*")
+                    if path.is_file()
+                )
+            )
+
+            if staged_paths != tuple(sorted(relative_paths)):
+                raise KnowledgeManagerError(
+                    "El staging temporal no coincide "
+                    "con el manifiesto de Knowledge."
+                )
+
+            yield staging_directory
 
     def _tracked_source_paths(self) -> tuple[str, ...]:
         """Obtiene desde Git los archivos canónicos de Knowledge."""
@@ -286,7 +427,10 @@ class KnowledgeManager(SyncModule):
             unchanged=tuple(unchanged),
         )
 
-    def _run_bridge(self) -> dict[str, Any]:
+    def _run_bridge(
+        self,
+        source_path: Path | None = None,
+    ) -> dict[str, Any]:
         """Ejecuta el adaptador con la credencial solo en el subproceso."""
 
         environment = os.environ.copy()
@@ -308,6 +452,14 @@ class KnowledgeManager(SyncModule):
             "--timeout",
             str(self.timeout_seconds),
         ]
+
+        if source_path is not None:
+            command.extend(
+                [
+                    "--source",
+                    str(source_path.resolve()),
+                ]
+            )
 
         try:
             result = subprocess.run(
@@ -376,7 +528,8 @@ class KnowledgeManager(SyncModule):
     def plan(self) -> KnowledgeDiffResult:
         """Compara la proyección existente sin modificar archivos."""
 
-        payload = self._run_bridge()
+        with self.staged_source() as staging_directory:
+            payload = self._run_bridge(staging_directory)
 
         source_name = payload.get("source_name")
         kb_id = payload.get("kb_id")
