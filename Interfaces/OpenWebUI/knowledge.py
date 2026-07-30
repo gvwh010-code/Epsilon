@@ -147,6 +147,71 @@ class KnowledgeManager(SyncModule):
 
         return digest.hexdigest()
 
+    def _ensure_tracked_by_git(
+        self,
+        relative_paths: tuple[str, ...],
+    ) -> None:
+        """Impide publicar archivos no registrados por Git."""
+
+        pathspecs = [
+            f":(literal){relative_path}"
+            for relative_path in relative_paths
+        ]
+
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "ls-files",
+                    "-z",
+                    "--cached",
+                    "--",
+                    *pathspecs,
+                ],
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as error:
+            raise KnowledgeManagerError(
+                "No fue posible comprobar el manifiesto con Git."
+            ) from error
+
+        if result.returncode != 0:
+            detail = result.stderr.strip()
+
+            raise KnowledgeManagerError(
+                "Git no pudo comprobar los archivos autorizados: "
+                f"{detail or result.returncode}"
+            )
+
+        tracked_paths = {
+            path
+            for path in result.stdout.split("\0")
+            if path
+        }
+
+        untracked_paths = tuple(
+            sorted(
+                set(relative_paths)
+                - tracked_paths
+            )
+        )
+
+        if untracked_paths:
+            raise KnowledgeManagerError(
+                "El manifiesto contiene archivos no registrados "
+                "por Git: "
+                + ", ".join(untracked_paths)
+            )
+
     def _manifest_paths(self) -> tuple[str, ...]:
         """Lee y valida los archivos autorizados para Knowledge."""
 
@@ -216,7 +281,13 @@ class KnowledgeManager(SyncModule):
                 + ", ".join(duplicates)
             )
 
-        return tuple(relative_paths)
+        manifest_paths = tuple(relative_paths)
+
+        self._ensure_tracked_by_git(
+            manifest_paths
+        )
+
+        return manifest_paths
 
     @contextmanager
     def staged_source(self) -> Iterator[Path]:
