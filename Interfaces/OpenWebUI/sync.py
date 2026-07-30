@@ -566,34 +566,31 @@ def run_doctor() -> int:
     return 1 if any(result.failed for result in results) else 0
 
 def build_projection_manager(
-    config: Config | None = None,
+    config: Config,
+    client: OpenWebUIClient,
 ) -> ProjectionManager:
     """Construye el gestor de Projection."""
-
-    active_config = config or Config()
-    client = OpenWebUIClient(active_config)
 
     return ProjectionManager(
         project_root=PROJECT_ROOT,
         client=client,
-        model_id=active_config.openwebui_model,
-        base_model_id=active_config.ollama_model,
+        model_id=config.openwebui_model,
+        base_model_id=config.ollama_model,
     )
 
 
 def build_knowledge_manager(
-    config: Config | None = None,
+    config: Config,
+    client: OpenWebUIClient,
 ) -> KnowledgeManager:
     """Construye el gestor de Knowledge."""
 
-    active_config = config or Config()
-
     return KnowledgeManager(
         project_root=PROJECT_ROOT,
-        config=active_config,
+        config=config,
+        client=client,
         source_name="epsilon-system",
     )
-
 
 def print_plan(
     plan: Plan,
@@ -685,11 +682,18 @@ def run_plan() -> int:
     try:
         config = Config()
 
-        projection_manager = build_projection_manager(config)
-        knowledge_manager = build_knowledge_manager(config)
+        with OpenWebUIClient(config) as client:
+            projection_manager = build_projection_manager(
+                config,
+                client,
+            )
+            knowledge_manager = build_knowledge_manager(
+                config,
+                client,
+            )
 
-        projection_plan = projection_manager.plan()
-        knowledge_result = knowledge_manager.plan()
+            projection_plan = projection_manager.plan()
+            knowledge_result = knowledge_manager.plan()
 
     except (
         FileNotFoundError,
@@ -717,8 +721,60 @@ def run_apply(confirmed: bool) -> int:
     """Aplica y verifica Projection con autorización explícita."""
 
     try:
-        manager = build_projection_manager()
-        plan = manager.plan()
+        config = Config()
+
+        with OpenWebUIClient(config) as client:
+            manager = build_projection_manager(
+                config,
+                client,
+            )
+
+            plan = manager.plan()
+
+            print_plan(
+                plan,
+                footer=None,
+            )
+
+            if not plan.has_changes:
+                print()
+                print(
+                    "✓ No había cambios de Projection "
+                    "que aplicar."
+                )
+                print(
+                    "Knowledge todavía no se aplica "
+                    "automáticamente."
+                )
+                return 0
+
+            if not confirmed:
+                print()
+                print("✗ Aplicación no autorizada.")
+                print(
+                    "  Revisa el plan y repite el comando "
+                    "con --yes para aprobarlo."
+                )
+                print("No se aplicaron cambios.")
+                return 2
+
+            try:
+                manager.apply(plan)
+
+            except (
+                FileNotFoundError,
+                OSError,
+                RuntimeError,
+                ValueError,
+                OpenWebUIClientError,
+            ) as error:
+                print()
+                print(f"✗ La aplicación falló: {error}")
+                print(
+                    "El resultado no fue considerado válido. "
+                    "Revisa nuevamente doctor y plan."
+                )
+                return 1
 
     except (
         FileNotFoundError,
@@ -734,45 +790,6 @@ def run_apply(confirmed: bool) -> int:
         print("No se aplicaron cambios.")
         return 1
 
-    print_plan(plan, footer=None)
-
-    if not plan.has_changes:
-        print()
-        print("✓ No había cambios de Projection que aplicar.")
-        print(
-            "Knowledge todavía no se aplica "
-            "automáticamente."
-        )
-        return 0
-
-    if not confirmed:
-        print()
-        print("✗ Aplicación no autorizada.")
-        print(
-            "  Revisa el plan y repite el comando con --yes "
-            "para aprobarlo."
-        )
-        print("No se aplicaron cambios.")
-        return 2
-
-    try:
-        manager.apply(plan)
-
-    except (
-        FileNotFoundError,
-        OSError,
-        RuntimeError,
-        ValueError,
-        OpenWebUIClientError,
-    ) as error:
-        print()
-        print(f"✗ La aplicación falló: {error}")
-        print(
-            "El resultado no fue considerado válido. "
-            "Revisa nuevamente doctor y plan."
-        )
-        return 1
-
     print()
     print("✓ Projection aplicada y verificada.")
     print(
@@ -781,7 +798,6 @@ def run_apply(confirmed: bool) -> int:
     )
 
     return 0
-
 
 def print_verification(
     plan: Plan,
@@ -868,11 +884,18 @@ def run_verify() -> int:
     try:
         config = Config()
 
-        projection_manager = build_projection_manager(config)
-        knowledge_manager = build_knowledge_manager(config)
+        with OpenWebUIClient(config) as client:
+            projection_manager = build_projection_manager(
+                config,
+                client,
+            )
+            knowledge_manager = build_knowledge_manager(
+                config,
+                client,
+            )
 
-        projection_plan = projection_manager.plan()
-        knowledge_result = knowledge_manager.plan()
+            projection_plan = projection_manager.plan()
+            knowledge_result = knowledge_manager.plan()
 
     except (
         FileNotFoundError,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from types import TracebackType
 
 import requests
 
@@ -19,6 +20,26 @@ class OpenWebUIClient:
     def __init__(self, config: Config | None = None):
         self.config = config or Config()
         self.session = requests.Session()
+
+    def close(self) -> None:
+        """Cierra la sesión HTTP administrada por el cliente."""
+
+        self.session.close()
+
+    def __enter__(self) -> OpenWebUIClient:
+        """Permite administrar el cliente mediante with."""
+
+        return self
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Garantiza el cierre de la sesión al salir del contexto."""
+
+        self.close()
 
     def health(self) -> None:
         """Comprueba disponibilidad básica sin autenticación."""
@@ -154,7 +175,7 @@ class OpenWebUIClient:
                 return model
 
         return None
-        
+
     def post(self, endpoint: str, payload: dict[str, Any]) -> Any:
         return self._request(
             method="POST",

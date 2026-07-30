@@ -27,11 +27,13 @@ class KnowledgeManager(SyncModule):
         self,
         project_root: Path,
         config: Config,
+        client: Any,
         source_name: str = "epsilon-system",
         timeout_seconds: float = 120.0,
     ):
         self.project_root = project_root.resolve()
         self.config = config
+        self.client = client
         self.source_name = source_name
         self.timeout_seconds = timeout_seconds
 
@@ -372,14 +374,6 @@ class KnowledgeManager(SyncModule):
             "--timeout",
             str(self.timeout_seconds),
         ]
-
-        if source_path is not None:
-            command.extend(
-                [
-                    "--source",
-                    str(source_path.resolve()),
-                ]
-            )
 
         try:
             result = subprocess.run(
