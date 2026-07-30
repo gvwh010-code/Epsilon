@@ -129,45 +129,4 @@ class KnowledgeDiffResult:
             self.deleted > 0
             or self.dirs_removed > 0
         )
-
-@dataclass(frozen=True)
-class KnowledgeProjectionDiffResult:
-    """Diferencias entre las fuentes y la proyección local versionada."""
-
-    added: tuple[str, ...] = ()
-    modified: tuple[str, ...] = ()
-    deleted: tuple[str, ...] = ()
-    unchanged: tuple[str, ...] = ()
-
-    @property
-    def added_count(self) -> int:
-        return len(self.added)
-
-    @property
-    def modified_count(self) -> int:
-        return len(self.modified)
-
-    @property
-    def deleted_count(self) -> int:
-        return len(self.deleted)
-
-    @property
-    def unchanged_count(self) -> int:
-        return len(self.unchanged)
-
-    @property
-    def total_changes(self) -> int:
-        return (
-            self.added_count
-            + self.modified_count
-            + self.deleted_count
-        )
-
-    @property
-    def has_changes(self) -> bool:
-        return self.total_changes > 0
-
-    @property
-    def has_removals(self) -> bool:
-        return self.deleted_count > 0
         

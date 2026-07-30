@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import stat
 import subprocess
 
@@ -21,7 +22,6 @@ from projection import ProjectionManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
-    KnowledgeProjectionDiffResult,
     Plan,
 )
 
@@ -92,29 +92,14 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
             INTERFACE_DIR / "EPSILON_PROJECTION.md",
         ),
         check_file(
-            "oikb config file",
-            PROJECT_ROOT / ".oikb.yaml",
+            "Knowledge manifest",
+            INTERFACE_DIR / "knowledge_manifest.txt",
+        ),
+        check_file(
+            "Knowledge target",
+            INTERFACE_DIR / "knowledge_target.json",
         ),
     ]
-
-    projection_directory = INTERFACE_DIR / "knowledge_projection"
-
-    if projection_directory.is_dir():
-        results.append(
-            DiagnosticResult(
-                component="Knowledge projection",
-                status="ok",
-                summary="Proyección local presente",
-            )
-        )
-    else:
-        results.append(
-            DiagnosticResult(
-                component="Knowledge projection",
-                status="warning",
-                summary="No existe; deberá construirse antes de aplicar Knowledge",
-            )
-        )
 
     oikb_executable = find_oikb()
 
@@ -181,65 +166,69 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
                         ),
                     )
                 )
+        target_path = INTERFACE_DIR / "knowledge_target.json"
 
-                try:
-                    validate_result = subprocess.run(
-                        [
-                            str(oikb_executable),
-                            "validate",
-                        ],
-                        cwd=PROJECT_ROOT,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=30,
-                        check=False,
-                    )
-                except (
-                    OSError,
-                    subprocess.TimeoutExpired,
-                ) as error:
-                    results.append(
-                        DiagnosticResult(
-                            component="oikb configuration",
-                            status="error",
-                            summary=(
-                                "No fue posible ejecutar "
-                                "la validación"
-                            ),
-                            details=(str(error),),
-                        )
-                    )
-                else:
-                    validation_output = (
-                        validate_result.stdout.strip()
-                        or validate_result.stderr.strip()
-                    )
+    if target_path.is_file():
+        try:
+            target_document = json.loads(
+                target_path.read_text(encoding="utf-8")
+            )
+        except OSError as error:
+            results.append(
+                DiagnosticResult(
+                    component="Knowledge target config",
+                    status="error",
+                    summary="No fue posible leer la configuración",
+                    details=(str(error),),
+                )
+            )
+        except json.JSONDecodeError as error:
+            results.append(
+                DiagnosticResult(
+                    component="Knowledge target config",
+                    status="error",
+                    summary="El archivo no contiene JSON válido",
+                    details=(str(error),),
+                )
+            )
+        else:
+            source_name = (
+                target_document.get("source_name")
+                if isinstance(target_document, dict)
+                else None
+            )
+            kb_id = (
+                target_document.get("kb_id")
+                if isinstance(target_document, dict)
+                else None
+            )
 
-                    if validate_result.returncode != 0:
-                        results.append(
-                            DiagnosticResult(
-                                component="oikb configuration",
-                                status="error",
-                                summary=".oikb.yaml no es válida",
-                                details=(
-                                    validation_output
-                                    or (
-                                        "Código de salida: "
-                                        f"{validate_result.returncode}"
-                                    ),
-                                ),
-                            )
-                        )
-                    else:
-                        results.append(
-                            DiagnosticResult(
-                                component="oikb configuration",
-                                status="ok",
-                                summary=".oikb.yaml validada",
-                            )
-                        )
+            if (
+                not isinstance(source_name, str)
+                or not source_name.strip()
+                or not isinstance(kb_id, str)
+                or not kb_id.strip()
+            ):
+                results.append(
+                    DiagnosticResult(
+                        component="Knowledge target config",
+                        status="error",
+                        summary=(
+                            "Debe contener source_name y kb_id válidos"
+                        ),
+                    )
+                )
+            else:
+                results.append(
+                    DiagnosticResult(
+                        component="Knowledge target config",
+                        status="ok",
+                        summary=(
+                            f"Destino válido: {source_name.strip()}"
+                        ),
+                        details=(f"KB: {kb_id.strip()}",),
+                    )
+                )
 
     ollama_executable = which("ollama")
 
@@ -608,9 +597,6 @@ def build_knowledge_manager(
 
 def print_plan(
     plan: Plan,
-    knowledge_projection: (
-        KnowledgeProjectionDiffResult | None
-    ) = None,
     knowledge: KnowledgeDiffResult | None = None,
     *,
     footer: str | None = "No se aplicaron cambios.",
@@ -640,44 +626,16 @@ def print_plan(
             for reason in change.reasons:
                 print(f"    - {reason}")
 
-    if knowledge_projection is not None:
-        if not knowledge_projection.has_changes:
-            print(
-                "✓ Knowledge projection   "
-                "Sin cambios "
-                f"({knowledge_projection.unchanged_count} archivos)"
-            )
-        else:
-            print(
-                "~ Knowledge projection   "
-                "No coincide con las fuentes canónicas"
-            )
-
-            for path in knowledge_projection.added:
-                print(f"    + Agregar:   {path}")
-
-            for path in knowledge_projection.modified:
-                print(f"    ~ Actualizar:{path}")
-
-            for path in knowledge_projection.deleted:
-                print(f"    - Retirar:   {path}")
-
-            if knowledge_projection.has_removals:
-                print(
-                    "    ! La reconstrucción retiraría "
-                    "archivos de la proyección."
-                )
-
     if knowledge is not None:
         if not knowledge.has_changes:
             print(
-                "✓ Knowledge remote       "
+                "✓ Knowledge              "
                 f"Sin cambios ({knowledge.unmodified} archivos)"
             )
         else:
             print(
-                "~ Knowledge remote       "
-                "No coincide con la proyección local"
+                "~ Knowledge              "
+                "No coincide con los archivos autorizados"
             )
             print(f"    - Agregar archivos: {knowledge.added}")
             print(f"    - Modificar archivos: {knowledge.modified}")
@@ -706,29 +664,9 @@ def print_plan(
     print(f"  Actualizar: {plan.update_count}")
     print(f"  Total:      {len(plan.changes)}")
 
-    if knowledge_projection is not None:
-        print()
-        print("Resumen de Knowledge projection:")
-        print(
-            "  Agregar:    "
-            f"{knowledge_projection.added_count}"
-        )
-        print(
-            "  Actualizar: "
-            f"{knowledge_projection.modified_count}"
-        )
-        print(
-            "  Retirar:    "
-            f"{knowledge_projection.deleted_count}"
-        )
-        print(
-            "  Total:      "
-            f"{knowledge_projection.total_changes}"
-        )
-
     if knowledge is not None:
         print()
-        print("Resumen de Knowledge remote:")
+        print("Resumen de Knowledge:")
         print(f"  Agregar:          {knowledge.added}")
         print(f"  Modificar:        {knowledge.modified}")
         print(f"  Eliminar:         {knowledge.deleted}")
@@ -751,9 +689,6 @@ def run_plan() -> int:
         knowledge_manager = build_knowledge_manager(config)
 
         projection_plan = projection_manager.plan()
-        knowledge_projection_result = (
-            knowledge_manager.plan_projection()
-        )
         knowledge_result = knowledge_manager.plan()
 
     except (
@@ -773,7 +708,6 @@ def run_plan() -> int:
 
     print_plan(
         projection_plan,
-        knowledge_projection_result,
         knowledge_result,
     )
 
@@ -851,20 +785,16 @@ def run_apply(confirmed: bool) -> int:
 
 def print_verification(
     plan: Plan,
-    knowledge_projection: KnowledgeProjectionDiffResult,
     knowledge: KnowledgeDiffResult,
 ) -> None:
-    """Muestra si todos los estados coinciden."""
+    """Muestra si Projection y Knowledge coinciden."""
 
     print("===================================")
     print("       EPSILON VERIFY")
     print("===================================\n")
 
     projection_verified = not plan.has_changes
-    knowledge_projection_verified = (
-        not knowledge_projection.has_changes
-    )
-    knowledge_remote_verified = (
+    knowledge_verified = (
         not knowledge.failed
         and not knowledge.has_changes
     )
@@ -886,42 +816,15 @@ def print_verification(
             for reason in change.reasons:
                 print(f"      - {reason}")
 
-    if knowledge_projection_verified:
+    if knowledge_verified:
         print(
-            "✓ Knowledge projection   "
-            "Estado verificado "
-            f"({knowledge_projection.unchanged_count} archivos)"
-        )
-    else:
-        print(
-            "✗ Knowledge projection   "
-            "No coincide con las fuentes canónicas"
-        )
-
-        for path in knowledge_projection.added:
-            print(f"    + Falta agregar:    {path}")
-
-        for path in knowledge_projection.modified:
-            print(f"    ~ Falta actualizar: {path}")
-
-        for path in knowledge_projection.deleted:
-            print(f"    - Archivo sobrante: {path}")
-
-        if knowledge_projection.has_removals:
-            print(
-                "    ! La reconstrucción retiraría "
-                "archivos de la proyección."
-            )
-
-    if knowledge_remote_verified:
-        print(
-            "✓ Knowledge remote       "
+            "✓ Knowledge              "
             f"Estado verificado ({knowledge.unmodified} archivos)"
         )
     else:
         print(
-            "✗ Knowledge remote       "
-            "No coincide con la proyección local"
+            "✗ Knowledge              "
+            "No coincide con los archivos autorizados"
         )
         print(f"    - Agregar archivos: {knowledge.added}")
         print(f"    - Modificar archivos: {knowledge.modified}")
@@ -946,11 +849,7 @@ def print_verification(
 
     print()
 
-    if (
-        projection_verified
-        and knowledge_projection_verified
-        and knowledge_remote_verified
-    ):
+    if projection_verified and knowledge_verified:
         print(
             "El estado activo de Projection y Knowledge "
             "coincide con el repositorio."
@@ -964,7 +863,7 @@ def print_verification(
     print("No se aplicaron cambios.")
 
 def run_verify() -> int:
-    """Verifica todos los estados sin modificar recursos."""
+    """Verifica Projection y Knowledge sin modificar recursos."""
 
     try:
         config = Config()
@@ -973,9 +872,6 @@ def run_verify() -> int:
         knowledge_manager = build_knowledge_manager(config)
 
         projection_plan = projection_manager.plan()
-        knowledge_projection_result = (
-            knowledge_manager.plan_projection()
-        )
         knowledge_result = knowledge_manager.plan()
 
     except (
@@ -995,13 +891,11 @@ def run_verify() -> int:
 
     print_verification(
         projection_plan,
-        knowledge_projection_result,
         knowledge_result,
     )
 
     if (
         projection_plan.has_changes
-        or knowledge_projection_result.has_changes
         or knowledge_result.failed
         or knowledge_result.has_changes
     ):

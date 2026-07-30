@@ -7,9 +7,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-
-import yaml
-
 from oikb.client import OikbClient
 from oikb.connectors.filesystem import FilesystemConnector
 from oikb.sync import SyncResult, run_sync
@@ -28,77 +25,49 @@ def require_environment(name: str) -> str:
     return value
 
 
-def load_source_entry(
-    config_path: Path,
-    source_name: str,
-) -> tuple[Path, str]:
-    """Obtiene una fuente local y su KB desde .oikb.yaml."""
+def load_target(target_path: Path) -> tuple[str, str]:
+    """Lee la identidad y el destino remoto de Knowledge."""
 
-    if not config_path.is_file():
+    if not target_path.is_file():
         raise RuntimeError(
-            f"No se encontró la configuración: {config_path}"
+            f"No se encontró la configuración de destino: {target_path}"
         )
 
     try:
-        document = yaml.safe_load(
-            config_path.read_text(encoding="utf-8")
+        document = json.loads(
+            target_path.read_text(encoding="utf-8")
         )
-    except (OSError, yaml.YAMLError) as error:
+    except OSError as error:
         raise RuntimeError(
-            f"No fue posible leer {config_path}: {error}"
+            f"No fue posible leer {target_path}: {error}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"La configuración no contiene JSON válido: {target_path}"
         ) from error
 
     if not isinstance(document, dict):
         raise RuntimeError(
-            "La configuración de oikb no es un objeto válido."
+            "La configuración de destino no es un objeto JSON."
         )
 
-    sources = document.get("sources")
+    source_name = document.get("source_name")
+    kb_id = document.get("kb_id")
 
-    if not isinstance(sources, list):
+    if (
+        not isinstance(source_name, str)
+        or not source_name.strip()
+    ):
         raise RuntimeError(
-            "La configuración de oikb no contiene una lista 'sources'."
-        )
-
-    matches = [
-        entry
-        for entry in sources
-        if isinstance(entry, dict)
-        and entry.get("name") == source_name
-    ]
-
-    if not matches:
-        raise RuntimeError(
-            f"No existe la fuente '{source_name}' en {config_path}."
-        )
-
-    if len(matches) > 1:
-        raise RuntimeError(
-            f"La fuente '{source_name}' está declarada más de una vez."
-        )
-
-    entry = matches[0]
-    source_value = entry.get("source")
-    kb_id = entry.get("kb-id")
-
-    if not isinstance(source_value, str) or not source_value.strip():
-        raise RuntimeError(
-            f"La fuente '{source_name}' no tiene una ruta válida."
+            "La configuración no contiene un source_name válido."
         )
 
     if not isinstance(kb_id, str) or not kb_id.strip():
         raise RuntimeError(
-            f"La fuente '{source_name}' no tiene un kb-id válido."
+            "La configuración no contiene un kb_id válido."
         )
 
-    source_path = Path(source_value).expanduser()
-
-    if not source_path.is_absolute():
-        source_path = config_path.parent / source_path
-
-    source_path = source_path.resolve()
-
-    return source_path, kb_id.strip()
+    return source_name.strip(), kb_id.strip()
 
 def ensure_non_empty_source(source_path: Path) -> None:
     """Rechaza una fuente sin archivos sincronizables."""
@@ -155,23 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--config",
-        default=".oikb.yaml",
-        help="Ruta al archivo de configuración de oikb.",
-    )
-
-    parser.add_argument(
-        "--name",
+        "--target",
         required=True,
-        help="Nombre exacto de la fuente declarada en el YAML.",
+        help="Ruta a knowledge_target.json.",
     )
 
     parser.add_argument(
         "--source",
-        help=(
-            "Ruta opcional que reemplaza temporalmente "
-            "la fuente declarada en el YAML."
-        ),
+        required=True,
+        help="Ruta al staging temporal de Knowledge.",
     )
 
     parser.add_argument(
@@ -189,23 +150,19 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
-        config_path = Path(
-            arguments.config
+        target_path = Path(
+            arguments.target
         ).expanduser().resolve()
 
-        source_path, kb_id = load_source_entry(
-            config_path=config_path,
-            source_name=arguments.name,
-        )
+        source_name, kb_id = load_target(target_path)
 
-        if arguments.source:
-            source_path = Path(
-                arguments.source
-            ).expanduser().resolve()
+        source_path = Path(
+            arguments.source
+        ).expanduser().resolve()
 
         if not source_path.is_dir():
             raise RuntimeError(
-                "La fuente seleccionada no existe o no es "
+                "La fuente temporal no existe o no es "
                 f"un directorio: {source_path}"
             )
 
@@ -259,7 +216,7 @@ def main() -> int:
         return 1
 
     payload = {
-        "source_name": arguments.name,
+        "source_name": source_name,
         "kb_id": kb_id,
         **result_to_dict(result),
     }
