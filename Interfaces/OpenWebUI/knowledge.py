@@ -900,36 +900,94 @@ class KnowledgeManager(SyncModule):
             candidate_slot=candidate_slot,
             diff=diff,
         )
-    def plan(self) -> KnowledgeDiffResult:
-        """Compara la fuente local con el slot activo."""
 
-        target = self._load_target()
-        active_slot = self._active_slot(target)
 
-        return self._plan_for_slot(
-            active_slot,
-            slot_role="activo",
+    def require_current_candidate_plan(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeCandidatePlan:
+        """Recalcula y rechaza un plan candidato obsoleto."""
+
+        if not isinstance(
+            approved_plan,
+            KnowledgeCandidatePlan,
+        ):
+            raise KnowledgeManagerError(
+                "El plan candidato aprobado no es válido."
+            )
+
+        if not approved_plan.diff.has_exact_details:
+            raise KnowledgeManagerError(
+                "El plan candidato aprobado no contiene "
+                "detalles exactos verificables."
+            )
+
+        current_plan = self.plan_candidate()
+
+        if not current_plan.diff.has_exact_details:
+            raise KnowledgeManagerError(
+                "El plan candidato recalculado no contiene "
+                "detalles exactos verificables."
+            )
+
+        if current_plan == approved_plan:
+            return current_plan
+
+        reasons: list[str] = []
+
+        if (
+            current_plan.active_slot
+            != approved_plan.active_slot
+        ):
+            reasons.append(
+                "cambió el slot activo"
+            )
+
+        if (
+            current_plan.candidate_slot
+            != approved_plan.candidate_slot
+        ):
+            reasons.append(
+                "cambió el slot candidato"
+            )
+
+        if (
+            current_plan.diff.manifest_digest
+            != approved_plan.diff.manifest_digest
+        ):
+            reasons.append(
+                "cambió el manifiesto local"
+            )
+
+        if (
+            current_plan.diff.diff_digest
+            != approved_plan.diff.diff_digest
+        ):
+            reasons.append(
+                "cambió el estado remoto del candidato"
+            )
+
+        if (
+            current_plan.diff
+            != approved_plan.diff
+            and not reasons
+        ):
+            reasons.append(
+                "cambiaron los detalles exactos del plan"
+            )
+
+        detail = ", ".join(reasons)
+
+        raise KnowledgeManagerError(
+            "El plan candidato quedó obsoleto"
+            + (
+                f": {detail}."
+                if detail
+                else "."
+            )
+            + " Debe generarse y aprobarse nuevamente."
         )
 
-    def plan_candidate(self) -> KnowledgeCandidatePlan:
-        """Compara la fuente local con el slot inactivo."""
-
-        target = self._load_target()
-        active_slot = self._active_slot(target)
-        candidate_slot = target.other_slot(
-            active_slot.name
-        )
-
-        diff = self._plan_for_slot(
-            candidate_slot,
-            slot_role="candidato",
-        )
-
-        return KnowledgeCandidatePlan(
-            active_slot=active_slot,
-            candidate_slot=candidate_slot,
-            diff=diff,
-        )
 
     def sync(self, dry_run: bool = True) -> bool:
         """Compatibilidad temporal con SyncModule."""
