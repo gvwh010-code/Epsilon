@@ -25,50 +25,6 @@ def require_environment(name: str) -> str:
     return value
 
 
-def load_target(target_path: Path) -> tuple[str, str]:
-    """Lee la identidad y el destino remoto de Knowledge."""
-
-    if not target_path.is_file():
-        raise RuntimeError(
-            f"No se encontró la configuración de destino: {target_path}"
-        )
-
-    try:
-        document = json.loads(
-            target_path.read_text(encoding="utf-8")
-        )
-    except OSError as error:
-        raise RuntimeError(
-            f"No fue posible leer {target_path}: {error}"
-        ) from error
-    except json.JSONDecodeError as error:
-        raise RuntimeError(
-            f"La configuración no contiene JSON válido: {target_path}"
-        ) from error
-
-    if not isinstance(document, dict):
-        raise RuntimeError(
-            "La configuración de destino no es un objeto JSON."
-        )
-
-    source_name = document.get("source_name")
-    kb_id = document.get("kb_id")
-
-    if (
-        not isinstance(source_name, str)
-        or not source_name.strip()
-    ):
-        raise RuntimeError(
-            "La configuración no contiene un source_name válido."
-        )
-
-    if not isinstance(kb_id, str) or not kb_id.strip():
-        raise RuntimeError(
-            "La configuración no contiene un kb_id válido."
-        )
-
-    return source_name.strip(), kb_id.strip()
-
 def ensure_non_empty_source(source_path: Path) -> None:
     """Rechaza una fuente sin archivos sincronizables."""
 
@@ -124,9 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--target",
+        "--source-name",
         required=True,
-        help="Ruta a knowledge_target.json.",
+        help="Nombre lógico de la fuente Knowledge.",
+    )
+
+    parser.add_argument(
+        "--kb-id",
+        required=True,
+        help="Identificador de la Knowledge remota.",
     )
 
     parser.add_argument(
@@ -150,11 +112,18 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
-        target_path = Path(
-            arguments.target
-        ).expanduser().resolve()
+        source_name = arguments.source_name.strip()
+        kb_id = arguments.kb_id.strip()
 
-        source_name, kb_id = load_target(target_path)
+        if not source_name:
+            raise RuntimeError(
+                "No se proporcionó un source_name válido."
+            )
+
+        if not kb_id:
+            raise RuntimeError(
+                "No se proporcionó un kb_id válido."
+            )
 
         source_path = Path(
             arguments.source

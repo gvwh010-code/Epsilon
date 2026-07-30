@@ -14,6 +14,12 @@ from config import Config
 from results import KnowledgeDiffResult
 from sync_module import SyncModule
 
+from knowledge_target import (
+    KnowledgeSlot,
+    KnowledgeTarget,
+    load_knowledge_target,
+)
+
 class KnowledgeManagerError(RuntimeError):
     """Error controlado al comparar Knowledge mediante oikb."""
 
@@ -95,6 +101,82 @@ class KnowledgeManager(SyncModule):
             raise FileNotFoundError(
                 f"No se encontró el manifiesto: {self.manifest_path}"
             )
+
+    def _load_target(self) -> KnowledgeTarget:
+        """Carga y valida la configuración Blue–Green."""
+
+        target = load_knowledge_target(
+            self.target_path
+        )
+
+        if target.source_name != self.source_name:
+            raise KnowledgeManagerError(
+                "La configuración de Knowledge declara "
+                "una fuente diferente de la esperada."
+            )
+
+        return target
+
+    def _active_slot(
+        self,
+        target: KnowledgeTarget,
+    ) -> KnowledgeSlot:
+        """Identifica el slot conectado actualmente al modelo."""
+
+        models = self.client.export_models()
+
+        model = next(
+            (
+                item
+                for item in models
+                if item.get("id") == target.model_id
+            ),
+            None,
+        )
+
+        if model is None:
+            raise KnowledgeManagerError(
+                f"No existe el modelo {target.model_id!r} "
+                "configurado para Knowledge."
+            )
+
+        meta = model.get("meta")
+
+        if not isinstance(meta, dict):
+            raise KnowledgeManagerError(
+                "El modelo activo no contiene metadatos válidos."
+            )
+
+        attached_knowledge = meta.get("knowledge")
+
+        if not isinstance(attached_knowledge, list):
+            raise KnowledgeManagerError(
+                "El modelo activo no contiene una lista "
+                "válida de Knowledge."
+            )
+
+        attached_ids = {
+            item.get("id")
+            for item in attached_knowledge
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("id"), str)
+            )
+        }
+
+        active_slots = tuple(
+            slot
+            for slot in target.slots
+            if slot.kb_id in attached_ids
+        )
+
+        if len(active_slots) != 1:
+            raise KnowledgeManagerError(
+                "El modelo debe tener conectado exactamente "
+                "uno de los slots blue o green."
+            )
+
+        return active_slots[0]
 
     @staticmethod
     def _read_counter(
@@ -352,6 +434,8 @@ class KnowledgeManager(SyncModule):
     def _run_bridge(
         self,
         source_path: Path,
+        *,
+        kb_id: str,
     ) -> dict[str, Any]:
         """Ejecuta el adaptador con la credencial solo en el subproceso."""
 
@@ -367,8 +451,10 @@ class KnowledgeManager(SyncModule):
             str(self.python_executable),
             str(self.bridge_path),
             "diff",
-            "--target",
-            str(self.target_path),
+            "--source-name",
+            self.source_name,
+            "--kb-id",
+            kb_id,
             "--source",
             str(source_path.resolve()),
             "--timeout",
@@ -442,8 +528,14 @@ class KnowledgeManager(SyncModule):
     def plan(self) -> KnowledgeDiffResult:
         """Compara la proyección existente sin modificar archivos."""
 
+        target = self._load_target()
+        active_slot = self._active_slot(target)
+
         with self.staged_source() as staging_directory:
-            payload = self._run_bridge(staging_directory)
+            payload = self._run_bridge(
+                staging_directory,
+                kb_id=active_slot.kb_id,
+            )
 
         source_name = payload.get("source_name")
         kb_id = payload.get("kb_id")
@@ -457,6 +549,12 @@ class KnowledgeManager(SyncModule):
         if not isinstance(kb_id, str) or not kb_id:
             raise KnowledgeManagerError(
                 "oikb no devolvió un kb-id válido."
+            )
+
+        if kb_id != active_slot.kb_id:
+            raise KnowledgeManagerError(
+                "oikb respondió por un slot diferente "
+                "del que está activo."
             )
 
         return KnowledgeDiffResult(

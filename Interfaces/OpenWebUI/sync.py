@@ -17,6 +17,10 @@ from client import (
 
 from config import Config
 from knowledge import KnowledgeManager, KnowledgeManagerError
+from knowledge_target import (
+    KnowledgeTargetError,
+    load_knowledge_target,
+)
 from ollama_client import OllamaClient, OllamaClientError
 from projection import ProjectionManager
 from results import (
@@ -168,67 +172,46 @@ def collect_local_diagnostics() -> list[DiagnosticResult]:
                 )
         target_path = INTERFACE_DIR / "knowledge_target.json"
 
-    if target_path.is_file():
+    if not target_path.is_file():
+        results.append(
+            DiagnosticResult(
+                component="Knowledge target config",
+                status="error",
+                summary="No existe knowledge_target.json",
+            )
+        )
+    else:
         try:
-            target_document = json.loads(
-                target_path.read_text(encoding="utf-8")
+            target = load_knowledge_target(
+                target_path
             )
-        except OSError as error:
+        except KnowledgeTargetError as error:
             results.append(
                 DiagnosticResult(
                     component="Knowledge target config",
                     status="error",
-                    summary="No fue posible leer la configuración",
-                    details=(str(error),),
-                )
-            )
-        except json.JSONDecodeError as error:
-            results.append(
-                DiagnosticResult(
-                    component="Knowledge target config",
-                    status="error",
-                    summary="El archivo no contiene JSON válido",
+                    summary="Configuración Blue–Green inválida",
                     details=(str(error),),
                 )
             )
         else:
-            source_name = (
-                target_document.get("source_name")
-                if isinstance(target_document, dict)
-                else None
-            )
-            kb_id = (
-                target_document.get("kb_id")
-                if isinstance(target_document, dict)
-                else None
-            )
-
-            if (
-                not isinstance(source_name, str)
-                or not source_name.strip()
-                or not isinstance(kb_id, str)
-                or not kb_id.strip()
-            ):
-                results.append(
-                    DiagnosticResult(
-                        component="Knowledge target config",
-                        status="error",
-                        summary=(
-                            "Debe contener source_name y kb_id válidos"
+            results.append(
+                DiagnosticResult(
+                    component="Knowledge target config",
+                    status="ok",
+                    summary=(
+                        f"Destino Blue–Green válido: "
+                        f"{target.source_name}"
+                    ),
+                    details=(
+                        f"Modelo: {target.model_id}",
+                        *(
+                            f"{slot.name}: {slot.kb_id}"
+                            for slot in target.slots
                         ),
-                    )
+                    ),
                 )
-            else:
-                results.append(
-                    DiagnosticResult(
-                        component="Knowledge target config",
-                        status="ok",
-                        summary=(
-                            f"Destino válido: {source_name.strip()}"
-                        ),
-                        details=(f"KB: {kb_id.strip()}",),
-                    )
-                )
+            )
 
     ollama_executable = which("ollama")
 
