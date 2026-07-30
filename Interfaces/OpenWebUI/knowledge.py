@@ -13,6 +13,7 @@ from typing import Any, Iterator
 from config import Config
 from results import KnowledgeDiffResult
 from sync_module import SyncModule
+from dataclasses import dataclass
 
 from knowledge_target import (
     KnowledgeSlot,
@@ -23,6 +24,13 @@ from knowledge_target import (
 class KnowledgeManagerError(RuntimeError):
     """Error controlado al comparar Knowledge mediante oikb."""
 
+@dataclass(frozen=True)
+class KnowledgeCandidatePlan:
+    """Plan de despliegue hacia el slot inactivo."""
+
+    active_slot: KnowledgeSlot
+    candidate_slot: KnowledgeSlot
+    diff: KnowledgeDiffResult
 
 class KnowledgeManager(SyncModule):
     """Compara Knowledge local con Open WebUI sin modificarlo."""
@@ -525,16 +533,18 @@ class KnowledgeManager(SyncModule):
 
         return payload
 
-    def plan(self) -> KnowledgeDiffResult:
-        """Compara la proyección existente sin modificar archivos."""
-
-        target = self._load_target()
-        active_slot = self._active_slot(target)
+    def _plan_for_slot(
+        self,
+        slot: KnowledgeSlot,
+        *,
+        slot_role: str,
+    ) -> KnowledgeDiffResult:
+        """Compara la fuente local con un slot concreto."""
 
         with self.staged_source() as staging_directory:
             payload = self._run_bridge(
                 staging_directory,
-                kb_id=active_slot.kb_id,
+                kb_id=slot.kb_id,
             )
 
         source_name = payload.get("source_name")
@@ -551,10 +561,10 @@ class KnowledgeManager(SyncModule):
                 "oikb no devolvió un kb-id válido."
             )
 
-        if kb_id != active_slot.kb_id:
+        if kb_id != slot.kb_id:
             raise KnowledgeManagerError(
                 "oikb respondió por un slot diferente "
-                "del que está activo."
+                f"del slot {slot_role}."
             )
 
         return KnowledgeDiffResult(
@@ -583,6 +593,67 @@ class KnowledgeManager(SyncModule):
                 payload,
                 "errors",
             ),
+        )
+
+    def plan(self) -> KnowledgeDiffResult:
+        """Compara la fuente local con el slot activo."""
+
+        target = self._load_target()
+        active_slot = self._active_slot(target)
+
+        return self._plan_for_slot(
+            active_slot,
+            slot_role="activo",
+        )
+
+    def plan_candidate(self) -> KnowledgeCandidatePlan:
+        """Compara la fuente local con el slot inactivo."""
+
+        target = self._load_target()
+        active_slot = self._active_slot(target)
+        candidate_slot = target.other_slot(
+            active_slot.name
+        )
+
+        diff = self._plan_for_slot(
+            candidate_slot,
+            slot_role="candidato",
+        )
+
+        return KnowledgeCandidatePlan(
+            active_slot=active_slot,
+            candidate_slot=candidate_slot,
+            diff=diff,
+        )
+    def plan(self) -> KnowledgeDiffResult:
+        """Compara la fuente local con el slot activo."""
+
+        target = self._load_target()
+        active_slot = self._active_slot(target)
+
+        return self._plan_for_slot(
+            active_slot,
+            slot_role="activo",
+        )
+
+    def plan_candidate(self) -> KnowledgeCandidatePlan:
+        """Compara la fuente local con el slot inactivo."""
+
+        target = self._load_target()
+        active_slot = self._active_slot(target)
+        candidate_slot = target.other_slot(
+            active_slot.name
+        )
+
+        diff = self._plan_for_slot(
+            candidate_slot,
+            slot_role="candidato",
+        )
+
+        return KnowledgeCandidatePlan(
+            active_slot=active_slot,
+            candidate_slot=candidate_slot,
+            diff=diff,
         )
 
     def sync(self, dry_run: bool = True) -> bool:
