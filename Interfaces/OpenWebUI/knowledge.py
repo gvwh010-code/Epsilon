@@ -834,19 +834,20 @@ class KnowledgeManager(SyncModule):
 
         return payload
 
-    def _plan_for_slot(
+    def _plan_for_slot_from_staging(
         self,
         slot: KnowledgeSlot,
+        staging_directory: Path,
         *,
         slot_role: str,
     ) -> KnowledgeDiffResult:
-        """Compara la fuente local con un slot concreto."""
+        """Compara un slot usando un staging ya inmovilizado."""
 
-        with self.staged_source() as staging_directory:
-            payload = self._run_bridge(
-                staging_directory,
-                kb_id=slot.kb_id,
-            )
+        payload = self._run_bridge(
+            staging_directory,
+            kb_id=slot.kb_id,
+            operation="diff",
+        )
 
         source_name = payload.get("source_name")
         kb_id = payload.get("kb_id")
@@ -982,6 +983,21 @@ class KnowledgeManager(SyncModule):
             ),
         )
 
+    def _plan_for_slot(
+        self,
+        slot: KnowledgeSlot,
+        *,
+        slot_role: str,
+    ) -> KnowledgeDiffResult:
+        """Compara un slot creando un staging temporal exacto."""
+
+        with self.staged_source() as staging_directory:
+            return self._plan_for_slot_from_staging(
+                slot,
+                staging_directory,
+                slot_role=slot_role,
+            )
+
     def plan(self) -> KnowledgeDiffResult:
         """Compara la fuente local con el slot activo."""
 
@@ -993,8 +1009,11 @@ class KnowledgeManager(SyncModule):
             slot_role="activo",
         )
 
-    def plan_candidate(self) -> KnowledgeCandidatePlan:
-        """Compara la fuente local con el slot inactivo."""
+    def _candidate_plan_from_staging(
+        self,
+        staging_directory: Path,
+    ) -> KnowledgeCandidatePlan:
+        """Calcula el plan candidato desde un staging inmovilizado."""
 
         target = self._load_target()
         active_slot = self._active_slot(target)
@@ -1002,8 +1021,9 @@ class KnowledgeManager(SyncModule):
             active_slot.name
         )
 
-        diff = self._plan_for_slot(
+        diff = self._plan_for_slot_from_staging(
             candidate_slot,
+            staging_directory,
             slot_role="candidato",
         )
 
@@ -1013,12 +1033,21 @@ class KnowledgeManager(SyncModule):
             diff=diff,
         )
 
+    def plan_candidate(self) -> KnowledgeCandidatePlan:
+        """Compara la fuente local con el slot inactivo."""
 
-    def require_current_candidate_plan(
+        with self.staged_source() as staging_directory:
+            return self._candidate_plan_from_staging(
+                staging_directory
+            )
+
+
+    def _require_matching_candidate_plan(
         self,
         approved_plan: KnowledgeCandidatePlan,
+        current_plan: KnowledgeCandidatePlan,
     ) -> KnowledgeCandidatePlan:
-        """Recalcula y rechaza un plan candidato obsoleto."""
+        """Rechaza un plan candidato distinto del aprobado."""
 
         if not isinstance(
             approved_plan,
@@ -1028,13 +1057,19 @@ class KnowledgeManager(SyncModule):
                 "El plan candidato aprobado no es válido."
             )
 
+        if not isinstance(
+            current_plan,
+            KnowledgeCandidatePlan,
+        ):
+            raise KnowledgeManagerError(
+                "El plan candidato recalculado no es válido."
+            )
+
         if not approved_plan.diff.has_exact_details:
             raise KnowledgeManagerError(
                 "El plan candidato aprobado no contiene "
                 "detalles exactos verificables."
             )
-
-        current_plan = self.plan_candidate()
 
         if not current_plan.diff.has_exact_details:
             raise KnowledgeManagerError(
@@ -1098,6 +1133,19 @@ class KnowledgeManager(SyncModule):
                 else "."
             )
             + " Debe generarse y aprobarse nuevamente."
+        )
+
+    def require_current_candidate_plan(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeCandidatePlan:
+        """Recalcula y rechaza un plan candidato obsoleto."""
+
+        current_plan = self.plan_candidate()
+
+        return self._require_matching_candidate_plan(
+            approved_plan,
+            current_plan,
         )
 
 
