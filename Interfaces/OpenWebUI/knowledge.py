@@ -364,6 +364,250 @@ class KnowledgeManager(SyncModule):
 
         return candidate_entry
 
+
+    @staticmethod
+    def _model_state_without_knowledge(
+        model: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Extrae el ModelForm ignorando solo meta.knowledge."""
+
+        if not isinstance(model, dict):
+            raise KnowledgeManagerError(
+                "El modelo exportado no es válido."
+            )
+
+        model_id = model.get("id")
+        name = model.get("name")
+        meta = model.get("meta")
+        params = model.get("params")
+        access_grants = model.get("access_grants")
+        is_active = model.get("is_active")
+
+        if (
+            not isinstance(model_id, str)
+            or not model_id.strip()
+        ):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene un id válido."
+            )
+
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+        ):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene "
+                "un nombre válido."
+            )
+
+        if not isinstance(meta, dict):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene "
+                "metadatos válidos."
+            )
+
+        attached_knowledge = meta.get("knowledge")
+
+        if not isinstance(attached_knowledge, list):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene una lista "
+                "válida de Knowledge."
+            )
+
+        if not isinstance(params, dict):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene params válidos."
+            )
+
+        if (
+            not isinstance(access_grants, list)
+            or not all(
+                item is None
+                or isinstance(item, dict)
+                for item in access_grants
+            )
+        ):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene "
+                "access_grants válidos."
+            )
+
+        if not isinstance(is_active, bool):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene "
+                "is_active válido."
+            )
+
+        if "base_model_id" not in model:
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene base_model_id."
+            )
+
+        base_model_id = model.get("base_model_id")
+
+        if (
+            base_model_id is not None
+            and (
+                not isinstance(base_model_id, str)
+                or not base_model_id.strip()
+            )
+        ):
+            raise KnowledgeManagerError(
+                "El modelo exportado contiene "
+                "un base_model_id inválido."
+            )
+
+        semantic_meta = deepcopy(meta)
+        semantic_meta.pop("knowledge")
+
+        return {
+            "id": model_id,
+            "base_model_id": base_model_id,
+            "name": name,
+            "meta": semantic_meta,
+            "params": deepcopy(params),
+            "access_grants": deepcopy(access_grants),
+            "is_active": is_active,
+        }
+
+    @classmethod
+    def _require_same_model_outside_knowledge(
+        cls,
+        reference_model: dict[str, Any],
+        candidate_model: dict[str, Any],
+    ) -> None:
+        """Rechaza cualquier cambio ajeno a meta.knowledge."""
+
+        reference_state = (
+            cls._model_state_without_knowledge(
+                reference_model
+            )
+        )
+        candidate_state = (
+            cls._model_state_without_knowledge(
+                candidate_model
+            )
+        )
+
+        if candidate_state != reference_state:
+            raise KnowledgeManagerError(
+                "El intercambio intentó modificar campos "
+                "del modelo ajenos a meta.knowledge."
+            )
+
+    @classmethod
+    def _build_switched_model(
+        cls,
+        model: dict[str, Any],
+        *,
+        model_id: str,
+        active_slot: KnowledgeSlot,
+        candidate_slot: KnowledgeSlot,
+        candidate_entry: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reemplaza únicamente el slot activo en el modelo."""
+
+        if (
+            not isinstance(model_id, str)
+            or not model_id.strip()
+        ):
+            raise KnowledgeManagerError(
+                "El id del modelo configurado no es válido."
+            )
+
+        if model.get("id") != model_id:
+            raise KnowledgeManagerError(
+                "El modelo exportado no coincide con "
+                "el modelo configurado."
+            )
+
+        if active_slot == candidate_slot:
+            raise KnowledgeManagerError(
+                "Los slots activo y candidato no pueden ser "
+                "el mismo."
+            )
+
+        if (
+            not isinstance(candidate_entry, dict)
+            or candidate_entry.get("id")
+            != candidate_slot.kb_id
+        ):
+            raise KnowledgeManagerError(
+                "La entrada conectable no corresponde "
+                "al slot candidato."
+            )
+
+        meta = model.get("meta")
+
+        if not isinstance(meta, dict):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene "
+                "metadatos válidos."
+            )
+
+        attached_knowledge = meta.get("knowledge")
+
+        if not isinstance(attached_knowledge, list):
+            raise KnowledgeManagerError(
+                "El modelo exportado no contiene una lista "
+                "válida de Knowledge."
+            )
+
+        active_indexes: list[int] = []
+        candidate_indexes: list[int] = []
+
+        for index, entry in enumerate(attached_knowledge):
+            if not isinstance(entry, dict):
+                raise KnowledgeManagerError(
+                    "El modelo contiene una entrada Knowledge "
+                    "inválida."
+                )
+
+            entry_id = entry.get("id")
+
+            if (
+                not isinstance(entry_id, str)
+                or not entry_id.strip()
+            ):
+                raise KnowledgeManagerError(
+                    "El modelo contiene una entrada Knowledge "
+                    "sin identificador válido."
+                )
+
+            if entry_id == active_slot.kb_id:
+                active_indexes.append(index)
+
+            if entry_id == candidate_slot.kb_id:
+                candidate_indexes.append(index)
+
+        if len(active_indexes) != 1:
+            raise KnowledgeManagerError(
+                "El modelo debe contener exactamente una "
+                "entrada para el slot activo."
+            )
+
+        if candidate_indexes:
+            raise KnowledgeManagerError(
+                "El slot candidato ya se encuentra conectado "
+                "al modelo."
+            )
+
+        switched_model = deepcopy(model)
+        switched_knowledge = (
+            switched_model["meta"]["knowledge"]
+        )
+
+        switched_knowledge[
+            active_indexes[0]
+        ] = deepcopy(candidate_entry)
+
+        cls._require_same_model_outside_knowledge(
+            model,
+            switched_model,
+        )
+
+        return switched_model
+
     @staticmethod
     def _read_counter(
         payload: dict[str, Any],
