@@ -32,6 +32,7 @@ from projection import ProjectionManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
+    KnowledgeSyncResult,
     Plan,
 )
 
@@ -667,6 +668,8 @@ def print_plan(
 
 def print_candidate_plan(
     plan: KnowledgeCandidatePlan,
+    *,
+    footer: str | None = "No se aplicaron cambios.",
 ) -> None:
     """Muestra el plan de preparación del slot inactivo."""
 
@@ -723,8 +726,10 @@ def print_candidate_plan(
     print(f"  Sin cambios:      {diff.unmodified}")
     print(f"  Total:            {diff.total_changes}")
 
-    print()
-    print("No se aplicaron cambios.")
+    if footer is not None:
+        print()
+        print(footer)
+
 
 def run_plan(
     candidate: bool = False,
@@ -786,6 +791,138 @@ def run_plan(
         )
 
     return 0
+
+
+def print_candidate_preparation(
+    result: KnowledgeSyncResult,
+) -> None:
+    """Muestra el resultado de preparar el slot inactivo."""
+
+    print()
+    print("===================================")
+    print("   EPSILON KNOWLEDGE PREPARED")
+    print("===================================\n")
+
+    print("✓ Slot candidato sincronizado y verificado.")
+    print(f"  KB ID: {result.kb_id}")
+    print(
+        "  Manifest digest: "
+        f"{result.manifest_digest[:12]}"
+    )
+
+    print()
+    print("Resumen de preparación:")
+    print(f"  Agregados:          {result.added}")
+    print(f"  Modificados:        {result.modified}")
+    print(f"  Eliminados:         {result.deleted}")
+    print(f"  Carpetas creadas:   {result.dirs_created}")
+    print(f"  Carpetas retiradas: {result.dirs_removed}")
+    print(f"  Sin cambios:        {result.unmodified}")
+    print(f"  Total operaciones:  {result.total_changes}")
+
+    for warning in result.warnings:
+        print(f"  ! {warning}")
+
+    print()
+    print(
+        "El modelo continúa conectado al slot activo original. "
+        "No se realizó el intercambio Blue–Green."
+    )
+
+
+def run_prepare_knowledge(
+    confirmed: bool,
+) -> int:
+    """Prepara y verifica el slot Knowledge inactivo."""
+
+    try:
+        config = Config()
+
+        with OpenWebUIClient(config) as client:
+            manager = build_knowledge_manager(
+                config,
+                client,
+            )
+
+            approved_plan = manager.plan_candidate()
+
+            print_candidate_plan(
+                approved_plan,
+                footer=None,
+            )
+
+            if not approved_plan.diff.has_changes:
+                print()
+                print(
+                    "✓ El slot candidato ya estaba preparado "
+                    "y no requiere escritura."
+                )
+                print(
+                    "El modelo continúa conectado al slot "
+                    "activo original."
+                )
+                return 0
+
+            if not confirmed:
+                print()
+                print("✗ Preparación no autorizada.")
+                print(
+                    "  Revisa el plan y repite el comando con "
+                    "'knowledge prepare --yes' para aprobarlo."
+                )
+                print("No se aplicaron cambios.")
+                return 2
+
+            try:
+                result = manager.prepare_candidate(
+                    approved_plan
+                )
+
+            except (
+                FileNotFoundError,
+                OSError,
+                RuntimeError,
+                ValueError,
+                KnowledgeManagerError,
+                OpenWebUIClientError,
+            ) as error:
+                print()
+                print(
+                    "✗ La preparación del slot candidato falló: "
+                    f"{error}"
+                )
+                print(
+                    "El candidato podría haber quedado "
+                    "parcialmente preparado. El intercambio "
+                    "Blue–Green no fue solicitado."
+                )
+                print(
+                    "Ejecuta nuevamente 'plan --candidate' "
+                    "antes de continuar."
+                )
+                return 1
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        KnowledgeManagerError,
+        OpenWebUIClientError,
+    ) as error:
+        print("===================================")
+        print("   EPSILON KNOWLEDGE PREPARE")
+        print("===================================\n")
+        print(
+            "✗ No fue posible construir el plan candidato: "
+            f"{error}"
+        )
+        print()
+        print("No se aplicaron cambios.")
+        return 1
+
+    print_candidate_preparation(result)
+    return 0
+
 
 def run_apply(confirmed: bool) -> int:
     """Aplica y verifica Projection con autorización explícita."""
@@ -1035,6 +1172,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Autoriza explícitamente la escritura en Open WebUI.",
     )
 
+    knowledge_parser = subparsers.add_parser(
+        "knowledge",
+        help="Gestiona el despliegue Blue–Green de Knowledge.",
+    )
+
+    knowledge_subparsers = knowledge_parser.add_subparsers(
+        dest="knowledge_command"
+    )
+
+    prepare_parser = knowledge_subparsers.add_parser(
+        "prepare",
+        help="Prepara y verifica el slot Knowledge inactivo.",
+    )
+
+    prepare_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "Autoriza la escritura exclusivamente "
+            "en el slot Knowledge inactivo."
+        ),
+    )
+
     subparsers.add_parser(
         "verify",
         help="Verifica el estado activo sin aplicar cambios.",
@@ -1060,6 +1220,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "apply":
         return run_apply(arguments.yes)
+
+    if arguments.command == "knowledge":
+        if arguments.knowledge_command == "prepare":
+            return run_prepare_knowledge(
+                arguments.yes
+            )
+
+        parser.error(
+            "Knowledge requiere un subcomando, "
+            "por ejemplo: knowledge prepare"
+        )
 
     if arguments.command == "verify":
         return run_verify()
