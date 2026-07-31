@@ -43,6 +43,15 @@ class KnowledgeCandidatePlan:
     candidate_slot: KnowledgeSlot
     diff: KnowledgeDiffResult
 
+@dataclass(frozen=True)
+class KnowledgeSwitchResult:
+    """Resultado verificado de un intercambio Blue–Green."""
+
+    previous_slot: KnowledgeSlot
+    active_slot: KnowledgeSlot
+    manifest_digest: str
+
+
 class KnowledgeManager(SyncModule):
     """Compara Knowledge local con Open WebUI sin modificarlo."""
 
@@ -144,27 +153,15 @@ class KnowledgeManager(SyncModule):
 
         return target
 
-    def _active_slot(
-        self,
-        target: KnowledgeTarget,
-    ) -> KnowledgeSlot:
-        """Identifica el slot conectado actualmente al modelo."""
+    @staticmethod
+    def _knowledge_entries_from_model(
+        model: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Obtiene y valida las entradas Knowledge del modelo."""
 
-        models = self.client.export_models()
-
-        model = next(
-            (
-                item
-                for item in models
-                if item.get("id") == target.model_id
-            ),
-            None,
-        )
-
-        if model is None:
+        if not isinstance(model, dict):
             raise KnowledgeManagerError(
-                f"No existe el modelo {target.model_id!r} "
-                "configurado para Knowledge."
+                "El modelo exportado no es válido."
             )
 
         meta = model.get("meta")
@@ -182,12 +179,48 @@ class KnowledgeManager(SyncModule):
                 "válida de Knowledge."
             )
 
-        attached_ids = {
-            item.get("id")
-            for item in attached_knowledge
+        entries: list[dict[str, Any]] = []
+
+        for entry in attached_knowledge:
+            if not isinstance(entry, dict):
+                raise KnowledgeManagerError(
+                    "El modelo contiene una entrada Knowledge "
+                    "inválida."
+                )
+
+            entry_id = entry.get("id")
+
             if (
-                isinstance(item, dict)
-                and isinstance(item.get("id"), str)
+                not isinstance(entry_id, str)
+                or not entry_id.strip()
+            ):
+                raise KnowledgeManagerError(
+                    "El modelo contiene una entrada Knowledge "
+                    "sin identificador válido."
+                )
+
+            entries.append(entry)
+
+        return entries
+
+    @classmethod
+    def _active_slot_from_model(
+        cls,
+        target: KnowledgeTarget,
+        model: dict[str, Any],
+    ) -> KnowledgeSlot:
+        """Identifica el slot activo en un modelo exportado."""
+
+        if model.get("id") != target.model_id:
+            raise KnowledgeManagerError(
+                "El modelo exportado no coincide con "
+                "el modelo configurado para Knowledge."
+            )
+
+        attached_ids = {
+            entry["id"]
+            for entry in cls._knowledge_entries_from_model(
+                model
             )
         }
 
@@ -205,6 +238,77 @@ class KnowledgeManager(SyncModule):
 
         return active_slots[0]
 
+    @classmethod
+    def _slot_entry_from_model(
+        cls,
+        model: dict[str, Any],
+        slot: KnowledgeSlot,
+    ) -> dict[str, Any]:
+        """Obtiene exactamente una entrada para un slot."""
+
+        matches = [
+            entry
+            for entry in cls._knowledge_entries_from_model(
+                model
+            )
+            if entry["id"] == slot.kb_id
+        ]
+
+        if len(matches) != 1:
+            raise KnowledgeManagerError(
+                "El modelo debe contener exactamente una "
+                f"entrada para el slot {slot.name!r}."
+            )
+
+        return deepcopy(matches[0])
+
+    @classmethod
+    def _knowledge_id_sequence(
+        cls,
+        model: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Obtiene el orden exacto de Knowledge conectadas."""
+
+        return tuple(
+            entry["id"]
+            for entry in cls._knowledge_entries_from_model(
+                model
+            )
+        )
+
+    def _active_slot(
+        self,
+        target: KnowledgeTarget,
+    ) -> KnowledgeSlot:
+        """Identifica el slot conectado actualmente al modelo."""
+
+        models = self.client.export_models()
+
+        matches = [
+            item
+            for item in models
+            if (
+                isinstance(item, dict)
+                and item.get("id") == target.model_id
+            )
+        ]
+
+        if not matches:
+            raise KnowledgeManagerError(
+                f"No existe el modelo {target.model_id!r} "
+                "configurado para Knowledge."
+            )
+
+        if len(matches) != 1:
+            raise KnowledgeManagerError(
+                "Open WebUI exportó más de un modelo con "
+                f"el id {target.model_id!r}."
+            )
+
+        return self._active_slot_from_model(
+            target,
+            matches[0],
+        )
 
     @staticmethod
     def _build_candidate_knowledge_entry(
@@ -1804,6 +1908,324 @@ class KnowledgeManager(SyncModule):
 
             return sync_result
 
+
+    @staticmethod
+    def _require_clean_candidate_plan(
+        plan: KnowledgeCandidatePlan,
+    ) -> None:
+        """Exige que el slot candidato esté completamente listo."""
+
+        if plan.diff.failed:
+            detail = (
+                "; ".join(plan.diff.errors)
+                if plan.diff.errors
+                else "errores no especificados"
+            )
+
+            raise KnowledgeManagerError(
+                "El slot candidato no pudo verificarse: "
+                f"{detail}."
+            )
+
+        if plan.diff.has_changes:
+            raise KnowledgeManagerError(
+                "El slot candidato todavía contiene "
+                "diferencias y no puede activarse."
+            )
+
+        if plan.diff.unmodified <= 0:
+            raise KnowledgeManagerError(
+                "El slot candidato no contiene archivos "
+                "verificados para activar."
+            )
+
+    @classmethod
+    def _require_expected_model_state(
+        cls,
+        reference_model: dict[str, Any],
+        intended_model: dict[str, Any],
+        observed_model: dict[str, Any],
+        target: KnowledgeTarget,
+        expected_slot: KnowledgeSlot,
+    ) -> None:
+        """Verifica campos semánticos, Knowledge y slot activo."""
+
+        cls._require_same_model_outside_knowledge(
+            reference_model,
+            observed_model,
+        )
+
+        intended_ids = cls._knowledge_id_sequence(
+            intended_model
+        )
+        observed_ids = cls._knowledge_id_sequence(
+            observed_model
+        )
+
+        if observed_ids != intended_ids:
+            raise KnowledgeManagerError(
+                "Open WebUI no conservó el orden y conjunto "
+                "esperados de Knowledge conectadas."
+            )
+
+        observed_slot = cls._active_slot_from_model(
+            target,
+            observed_model,
+        )
+
+        if observed_slot != expected_slot:
+            raise KnowledgeManagerError(
+                "Open WebUI no activó el slot Knowledge "
+                "esperado."
+            )
+
+    def _verify_switched_candidate_content(
+        self,
+        plan: KnowledgeCandidatePlan,
+        staging_directory: Path,
+    ) -> KnowledgeDiffResult:
+        """Confirma que el nuevo slot activo sigue convergente."""
+
+        verified_diff = self._plan_for_slot_from_staging(
+            plan.candidate_slot,
+            staging_directory,
+            slot_role="activo después del intercambio",
+        )
+
+        if (
+            verified_diff.manifest_digest
+            != plan.diff.manifest_digest
+        ):
+            raise KnowledgeManagerError(
+                "La verificación posterior al intercambio "
+                "utilizó un manifiesto diferente."
+            )
+
+        if verified_diff.failed:
+            detail = (
+                "; ".join(verified_diff.errors)
+                if verified_diff.errors
+                else "errores no especificados"
+            )
+
+            raise KnowledgeManagerError(
+                "El nuevo slot activo informó errores: "
+                f"{detail}."
+            )
+
+        if verified_diff.has_changes:
+            raise KnowledgeManagerError(
+                "El nuevo slot activo conserva diferencias "
+                "después del intercambio."
+            )
+
+        expected_file_count = (
+            plan.diff.added
+            + plan.diff.modified
+            + plan.diff.unmodified
+        )
+
+        if verified_diff.unmodified != expected_file_count:
+            raise KnowledgeManagerError(
+                "La cantidad de archivos del nuevo slot activo "
+                "no coincide con el plan aprobado."
+            )
+
+        return verified_diff
+
+    def _restore_model_after_failed_switch(
+        self,
+        *,
+        target: KnowledgeTarget,
+        original_model: dict[str, Any],
+        original_slot: KnowledgeSlot,
+    ) -> None:
+        """Restaura y verifica el modelo anterior."""
+
+        rollback_response = self.client.update_model(
+            original_model
+        )
+
+        self._require_expected_model_state(
+            original_model,
+            original_model,
+            rollback_response,
+            target,
+            original_slot,
+        )
+
+        rollback_export = self.client.export_model(
+            target.model_id
+        )
+
+        self._require_expected_model_state(
+            original_model,
+            original_model,
+            rollback_export,
+            target,
+            original_slot,
+        )
+
+    def switch_candidate(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeSwitchResult:
+        """Activa el candidato bajo un bloqueo exclusivo."""
+
+        with self.deployment_lock():
+            return self._switch_candidate_locked(
+                approved_plan
+            )
+
+    def _switch_candidate_locked(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeSwitchResult:
+        """Intercambia el slot activo con rollback automático."""
+
+        with self.staged_source() as staging_directory:
+            current_plan = self._candidate_plan_from_staging(
+                staging_directory
+            )
+
+            validated_plan = (
+                self._require_matching_candidate_plan(
+                    approved_plan,
+                    current_plan,
+                )
+            )
+
+            self._require_clean_candidate_plan(
+                validated_plan
+            )
+
+            target = self._load_target()
+
+            original_model = self.client.export_model(
+                target.model_id
+            )
+
+            original_slot = self._active_slot_from_model(
+                target,
+                original_model,
+            )
+
+            if original_slot != validated_plan.active_slot:
+                raise KnowledgeManagerError(
+                    "El slot activo cambió antes del "
+                    "intercambio. La operación fue cancelada."
+                )
+
+            active_entry = self._slot_entry_from_model(
+                original_model,
+                original_slot,
+            )
+
+            candidate_record = self.client.get(
+                "/api/v1/knowledge/"
+                + validated_plan.candidate_slot.kb_id
+            )
+
+            candidate_entry = (
+                self._build_candidate_knowledge_entry(
+                    active_entry,
+                    candidate_record,
+                    validated_plan.candidate_slot,
+                )
+            )
+
+            switched_model = self._build_switched_model(
+                original_model,
+                model_id=target.model_id,
+                active_slot=original_slot,
+                candidate_slot=(
+                    validated_plan.candidate_slot
+                ),
+                candidate_entry=candidate_entry,
+            )
+
+            # Última protección contra un modelo obsoleto.
+            latest_model = self.client.export_model(
+                target.model_id
+            )
+
+            self._require_expected_model_state(
+                original_model,
+                original_model,
+                latest_model,
+                target,
+                original_slot,
+            )
+
+            write_attempted = False
+
+            try:
+                write_attempted = True
+
+                update_response = self.client.update_model(
+                    switched_model
+                )
+
+                self._require_expected_model_state(
+                    original_model,
+                    switched_model,
+                    update_response,
+                    target,
+                    validated_plan.candidate_slot,
+                )
+
+                updated_export = self.client.export_model(
+                    target.model_id
+                )
+
+                self._require_expected_model_state(
+                    original_model,
+                    switched_model,
+                    updated_export,
+                    target,
+                    validated_plan.candidate_slot,
+                )
+
+                self._verify_switched_candidate_content(
+                    validated_plan,
+                    staging_directory,
+                )
+
+            except Exception as switch_error:
+                if not write_attempted:
+                    raise
+
+                try:
+                    self._restore_model_after_failed_switch(
+                        target=target,
+                        original_model=original_model,
+                        original_slot=original_slot,
+                    )
+
+                except Exception as rollback_error:
+                    raise KnowledgeManagerError(
+                        "El intercambio Knowledge falló y "
+                        "el modelo anterior no pudo "
+                        "restaurarse de forma verificable. "
+                        f"Error original: {switch_error}. "
+                        f"Error de restauración: "
+                        f"{rollback_error}."
+                    ) from switch_error
+
+                raise KnowledgeManagerError(
+                    "El intercambio Knowledge no pudo "
+                    "verificarse. El modelo anterior fue "
+                    "restaurado correctamente. "
+                    f"Motivo: {switch_error}."
+                ) from switch_error
+
+            return KnowledgeSwitchResult(
+                previous_slot=original_slot,
+                active_slot=validated_plan.candidate_slot,
+                manifest_digest=(
+                    validated_plan.diff.manifest_digest
+                ),
+            )
 
     def sync(self, dry_run: bool = True) -> bool:
         """Compatibilidad temporal con SyncModule."""
