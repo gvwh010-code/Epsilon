@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 import fcntl
 import hashlib
@@ -203,6 +204,165 @@ class KnowledgeManager(SyncModule):
             )
 
         return active_slots[0]
+
+
+    @staticmethod
+    def _build_candidate_knowledge_entry(
+        active_entry: dict[str, Any],
+        candidate_record: dict[str, Any],
+        candidate_slot: KnowledgeSlot,
+    ) -> dict[str, Any]:
+        """Construye la entrada conectable del slot candidato."""
+
+        if not isinstance(active_entry, dict):
+            raise KnowledgeManagerError(
+                "La entrada Knowledge activa no es válida."
+            )
+
+        if not isinstance(candidate_record, dict):
+            raise KnowledgeManagerError(
+                "La respuesta del slot candidato no es válida."
+            )
+
+        candidate_id = candidate_record.get("id")
+
+        if candidate_id != candidate_slot.kb_id:
+            raise KnowledgeManagerError(
+                "Open WebUI devolvió una Knowledge diferente "
+                "del slot candidato configurado."
+            )
+
+        active_user_id = active_entry.get("user_id")
+        candidate_user_id = candidate_record.get("user_id")
+
+        if (
+            not isinstance(active_user_id, str)
+            or not active_user_id.strip()
+            or not isinstance(candidate_user_id, str)
+            or not candidate_user_id.strip()
+        ):
+            raise KnowledgeManagerError(
+                "No fue posible validar el propietario de "
+                "los slots Knowledge."
+            )
+
+        if active_user_id != candidate_user_id:
+            raise KnowledgeManagerError(
+                "Los slots activo y candidato pertenecen "
+                "a propietarios diferentes."
+            )
+
+        if candidate_record.get("write_access") is not True:
+            raise KnowledgeManagerError(
+                "La API key no tiene acceso de escritura "
+                "al slot candidato."
+            )
+
+        text_fields = (
+            "id",
+            "user_id",
+            "name",
+            "description",
+        )
+
+        for field_name in text_fields:
+            value = candidate_record.get(field_name)
+
+            if not isinstance(value, str):
+                raise KnowledgeManagerError(
+                    "El slot candidato contiene un campo "
+                    f"{field_name!r} inválido."
+                )
+
+            if (
+                field_name != "description"
+                and not value.strip()
+            ):
+                raise KnowledgeManagerError(
+                    "El slot candidato contiene un campo "
+                    f"{field_name!r} vacío."
+                )
+
+        meta = candidate_record.get("meta")
+
+        if meta is not None and not isinstance(meta, dict):
+            raise KnowledgeManagerError(
+                "El slot candidato contiene meta inválido."
+            )
+
+        access_grants = candidate_record.get(
+            "access_grants"
+        )
+
+        if (
+            not isinstance(access_grants, list)
+            or not all(
+                isinstance(item, dict)
+                for item in access_grants
+            )
+        ):
+            raise KnowledgeManagerError(
+                "El slot candidato contiene "
+                "access_grants inválidos."
+            )
+
+        for field_name in (
+            "created_at",
+            "updated_at",
+        ):
+            value = candidate_record.get(field_name)
+
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise KnowledgeManagerError(
+                    "El slot candidato contiene un campo "
+                    f"{field_name!r} inválido."
+                )
+
+        connected_type = active_entry.get("type")
+
+        if (
+            not isinstance(connected_type, str)
+            or not connected_type.strip()
+        ):
+            raise KnowledgeManagerError(
+                "La entrada Knowledge activa no contiene "
+                "un tipo conectable válido."
+            )
+
+        connected_user = active_entry.get("user")
+
+        if not isinstance(connected_user, dict):
+            raise KnowledgeManagerError(
+                "La entrada Knowledge activa no contiene "
+                "información válida del propietario."
+            )
+
+        candidate_entry = deepcopy(active_entry)
+
+        for field_name in (
+            "id",
+            "user_id",
+            "name",
+            "description",
+            "meta",
+            "access_grants",
+            "created_at",
+            "updated_at",
+        ):
+            candidate_entry[field_name] = deepcopy(
+                candidate_record[field_name]
+            )
+
+        candidate_entry["write_access"] = True
+
+        candidate_entry.pop("files", None)
+        candidate_entry.pop("file_count", None)
+
+        return candidate_entry
 
     @staticmethod
     def _read_counter(
