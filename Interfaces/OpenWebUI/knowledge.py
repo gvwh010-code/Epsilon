@@ -18,6 +18,7 @@ from results import (
     KnowledgeDeletedFile,
     KnowledgeDiffResult,
     KnowledgeModifiedFile,
+    KnowledgeSyncResult,
 )
 
 from sync_module import SyncModule
@@ -363,6 +364,103 @@ class KnowledgeManager(SyncModule):
                 value.items()
             )
         )
+
+    def _read_sync_result(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_kb_id: str,
+    ) -> KnowledgeSyncResult:
+        """Convierte y valida el resultado de una sincronización."""
+
+        if (
+            not isinstance(expected_kb_id, str)
+            or not expected_kb_id.strip()
+        ):
+            raise KnowledgeManagerError(
+                "El kb-id esperado para la sincronización "
+                "no es válido."
+            )
+
+        source_name = payload.get("source_name")
+        kb_id = payload.get("kb_id")
+
+        if source_name != self.source_name:
+            raise KnowledgeManagerError(
+                "oikb devolvió una fuente diferente "
+                "durante la sincronización."
+            )
+
+        if (
+            not isinstance(kb_id, str)
+            or not kb_id.strip()
+        ):
+            raise KnowledgeManagerError(
+                "oikb no devolvió un kb-id válido "
+                "durante la sincronización."
+            )
+
+        if kb_id != expected_kb_id:
+            raise KnowledgeManagerError(
+                "oikb sincronizó un slot diferente "
+                "del candidato autorizado."
+            )
+
+        try:
+            result = KnowledgeSyncResult(
+                source_name=source_name,
+                kb_id=kb_id,
+                manifest_digest=self._read_digest(
+                    payload,
+                    "manifest_digest",
+                ),
+                added=self._read_counter(
+                    payload,
+                    "added",
+                ),
+                modified=self._read_counter(
+                    payload,
+                    "modified",
+                ),
+                deleted=self._read_counter(
+                    payload,
+                    "deleted",
+                ),
+                unmodified=self._read_counter(
+                    payload,
+                    "unmodified",
+                ),
+                dirs_created=self._read_counter(
+                    payload,
+                    "dirs_created",
+                ),
+                dirs_removed=self._read_counter(
+                    payload,
+                    "dirs_removed",
+                ),
+                warnings=self._read_messages(
+                    payload,
+                    "warnings",
+                ),
+                errors=self._read_messages(
+                    payload,
+                    "errors",
+                ),
+            )
+        except ValueError as error:
+            raise KnowledgeManagerError(
+                "El resultado de sincronización Knowledge "
+                "no es válido."
+            ) from error
+
+        if result.failed:
+            raise KnowledgeManagerError(
+                "La sincronización del slot candidato informó "
+                "errores: "
+                + "; ".join(result.errors)
+            )
+
+        return result
 
     @staticmethod
     def _sha256(path: Path) -> str:
