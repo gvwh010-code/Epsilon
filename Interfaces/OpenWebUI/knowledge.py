@@ -1149,6 +1149,119 @@ class KnowledgeManager(SyncModule):
         )
 
 
+    def _require_active_slot(
+        self,
+        expected_slot: KnowledgeSlot,
+    ) -> KnowledgeSlot:
+        """Confirma que el modelo conserva el slot activo esperado."""
+
+        target = self._load_target()
+        current_slot = self._active_slot(target)
+
+        if current_slot != expected_slot:
+            raise KnowledgeManagerError(
+                "El slot activo cambió durante la preparación "
+                "del candidato. La operación fue cancelada."
+            )
+
+        return current_slot
+
+    def prepare_candidate(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeSyncResult:
+        """Sincroniza y verifica únicamente el slot inactivo."""
+
+        with self.staged_source() as staging_directory:
+            current_plan = self._candidate_plan_from_staging(
+                staging_directory
+            )
+
+            validated_plan = (
+                self._require_matching_candidate_plan(
+                    approved_plan,
+                    current_plan,
+                )
+            )
+
+            self._require_active_slot(
+                validated_plan.active_slot
+            )
+
+            sync_payload = self._run_bridge(
+                staging_directory,
+                kb_id=validated_plan.candidate_slot.kb_id,
+                operation="sync",
+            )
+
+            sync_result = self._read_sync_result(
+                sync_payload,
+                expected_kb_id=(
+                    validated_plan.candidate_slot.kb_id
+                ),
+            )
+
+            if (
+                sync_result.manifest_digest
+                != validated_plan.diff.manifest_digest
+            ):
+                raise KnowledgeManagerError(
+                    "La sincronización utilizó un manifiesto "
+                    "diferente del plan aprobado."
+                )
+
+            verified_diff = (
+                self._plan_for_slot_from_staging(
+                    validated_plan.candidate_slot,
+                    staging_directory,
+                    slot_role="candidato preparado",
+                )
+            )
+
+            if (
+                verified_diff.manifest_digest
+                != validated_plan.diff.manifest_digest
+            ):
+                raise KnowledgeManagerError(
+                    "La verificación posterior utilizó un "
+                    "manifiesto diferente del plan aprobado."
+                )
+
+            if verified_diff.failed:
+                raise KnowledgeManagerError(
+                    "La verificación posterior del candidato "
+                    "informó errores: "
+                    + "; ".join(verified_diff.errors)
+                )
+
+            if verified_diff.has_changes:
+                raise KnowledgeManagerError(
+                    "El slot candidato conserva diferencias "
+                    "después de la sincronización."
+                )
+
+            expected_file_count = (
+                validated_plan.diff.added
+                + validated_plan.diff.modified
+                + validated_plan.diff.unmodified
+            )
+
+            if (
+                verified_diff.unmodified
+                != expected_file_count
+            ):
+                raise KnowledgeManagerError(
+                    "La cantidad de archivos verificados en el "
+                    "slot candidato no coincide con el manifiesto."
+                )
+
+            self._require_active_slot(
+                validated_plan.active_slot
+            )
+
+            return sync_result
+
+
     def sync(self, dry_run: bool = True) -> bool:
         """Compatibilidad temporal con SyncModule."""
 
