@@ -353,7 +353,6 @@ class KnowledgeDiffResult:
                         f"El contador {field_name} no coincide "
                         "con los detalles exactos del plan."
                     )
-
     @property
     def failed(self) -> bool:
         return bool(self.errors)
@@ -398,6 +397,89 @@ class KnowledgeDiffResult:
             and self.diff_digest
         )
 
+
+@dataclass(frozen=True)
+class KnowledgeSyncResult:
+    """Resultado estructurado de preparar un slot Knowledge."""
+
+    source_name: str
+    kb_id: str
+    manifest_digest: str
+
+    added: int = 0
+    modified: int = 0
+    deleted: int = 0
+    unmodified: int = 0
+
+    dirs_created: int = 0
+    dirs_removed: int = 0
+
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.source_name, str)
+            or not self.source_name.strip()
+        ):
+            raise ValueError(
+                "El nombre de la fuente Knowledge no es válido."
+            )
+
+        if (
+            not isinstance(self.kb_id, str)
+            or not self.kb_id.strip()
+        ):
+            raise ValueError(
+                "El identificador de Knowledge no es válido."
+            )
+
+        if (
+            not isinstance(self.manifest_digest, str)
+            or len(self.manifest_digest) != 64
+            or any(
+                character not in "0123456789abcdefABCDEF"
+                for character in self.manifest_digest
+            )
+        ):
+            raise ValueError(
+                "manifest_digest no contiene "
+                "una huella SHA-256 válida."
+            )
+
+        counters = (
+            self.added,
+            self.modified,
+            self.deleted,
+            self.unmodified,
+            self.dirs_created,
+            self.dirs_removed,
+        )
+
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for value in counters
+        ):
+            raise ValueError(
+                "Los contadores de sincronización Knowledge "
+                "deben ser enteros no negativos."
+            )
+
+        if not all(
+            isinstance(message, str)
+            and bool(message.strip())
+            for message in (
+                *self.warnings,
+                *self.errors,
+            )
+        ):
+            raise ValueError(
+                "Los mensajes de sincronización Knowledge "
+                "no son válidos."
+            )
+
     @property
     def failed(self) -> bool:
         return bool(self.errors)
@@ -422,15 +504,4 @@ class KnowledgeDiffResult:
         return (
             self.file_changes
             + self.directory_changes
-        )
-
-    @property
-    def has_changes(self) -> bool:
-        return self.total_changes > 0
-
-    @property
-    def has_destructive_changes(self) -> bool:
-        return (
-            self.deleted > 0
-            or self.dirs_removed > 0
         )

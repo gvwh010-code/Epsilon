@@ -13,8 +13,8 @@ from results import (
     KnowledgeDeletedFile,
     KnowledgeDiffResult,
     KnowledgeModifiedFile,
+    KnowledgeSyncResult,
 )
-
 
 DIGEST_A = "a" * 64
 DIGEST_B = "b" * 64
@@ -278,6 +278,69 @@ class KnowledgeDiffResultTests(unittest.TestCase):
             changed_remote_state,
         )
 
+class KnowledgeSyncResultTests(unittest.TestCase):
+    """Pruebas del resultado de escritura controlada."""
+
+    def test_accepts_successful_sync_result(self) -> None:
+        result = KnowledgeSyncResult(
+            source_name="epsilon-system",
+            kb_id="green-id",
+            manifest_digest=DIGEST_A,
+            added=4,
+            dirs_created=3,
+        )
+
+        self.assertFalse(result.failed)
+        self.assertEqual(result.file_changes, 4)
+        self.assertEqual(result.directory_changes, 3)
+        self.assertEqual(result.total_changes, 7)
+
+    def test_preserves_sync_warnings_and_errors(self) -> None:
+        result = KnowledgeSyncResult(
+            source_name="epsilon-system",
+            kb_id="green-id",
+            manifest_digest=DIGEST_A,
+            warnings=("warning",),
+            errors=("upload failed",),
+        )
+
+        self.assertTrue(result.failed)
+        self.assertEqual(result.warnings, ("warning",))
+        self.assertEqual(result.errors, ("upload failed",))
+
+    def test_rejects_invalid_sync_digest(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "manifest_digest",
+        ):
+            KnowledgeSyncResult(
+                source_name="epsilon-system",
+                kb_id="green-id",
+                manifest_digest="invalid",
+            )
+
+    def test_rejects_invalid_sync_counters(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "contadores",
+        ):
+            KnowledgeSyncResult(
+                source_name="epsilon-system",
+                kb_id="green-id",
+                manifest_digest=DIGEST_A,
+                added=-1,
+            )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "contadores",
+        ):
+            KnowledgeSyncResult(
+                source_name="epsilon-system",
+                kb_id="green-id",
+                manifest_digest=DIGEST_A,
+                added=True,
+            )
 
 if __name__ == "__main__":
     unittest.main()
