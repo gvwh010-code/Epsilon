@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import json
 import os
@@ -1149,6 +1150,94 @@ class KnowledgeManager(SyncModule):
         )
 
 
+
+    def _deployment_lock_path(self) -> Path:
+        """Construye un bloqueo estable para este repositorio."""
+
+        project_key = hashlib.sha256(
+            str(
+                self.project_root.resolve(
+                    strict=False
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+
+        return (
+            Path(tempfile.gettempdir())
+            / (
+                "epsilon-knowledge-"
+                f"{os.getuid()}-{project_key}.lock"
+            )
+        )
+
+    @contextmanager
+    def deployment_lock(self) -> Iterator[None]:
+        """Impide despliegues Knowledge simultáneos."""
+
+        lock_path = self._deployment_lock_path()
+
+        try:
+            lock_file = lock_path.open(
+                "a+",
+                encoding="utf-8",
+            )
+        except OSError as error:
+            raise KnowledgeManagerError(
+                "No se pudo abrir el bloqueo exclusivo "
+                f"de Knowledge: {error}"
+            ) from error
+
+        acquired = False
+
+        try:
+            try:
+                fcntl.flock(
+                    lock_file.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+                acquired = True
+
+            except BlockingIOError as error:
+                lock_file.seek(0)
+                owner = lock_file.read().strip()
+
+                detail = (
+                    f" Propietario registrado: {owner}."
+                    if owner
+                    else ""
+                )
+
+                raise KnowledgeManagerError(
+                    "Ya existe otra operación de despliegue "
+                    "Knowledge en curso."
+                    + detail
+                ) from error
+
+            except OSError as error:
+                raise KnowledgeManagerError(
+                    "No se pudo adquirir el bloqueo exclusivo "
+                    f"de Knowledge: {error}"
+                ) from error
+
+            lock_file.seek(0)
+            lock_file.truncate()
+            lock_file.write(
+                f"pid={os.getpid()}\n"
+            )
+            lock_file.flush()
+
+            yield
+
+        finally:
+            if acquired:
+                fcntl.flock(
+                    lock_file.fileno(),
+                    fcntl.LOCK_UN,
+                )
+
+            lock_file.close()
+
+
     def _require_active_slot(
         self,
         expected_slot: KnowledgeSlot,
@@ -1167,6 +1256,17 @@ class KnowledgeManager(SyncModule):
         return current_slot
 
     def prepare_candidate(
+        self,
+        approved_plan: KnowledgeCandidatePlan,
+    ) -> KnowledgeSyncResult:
+        """Prepara el candidato bajo un bloqueo exclusivo."""
+
+        with self.deployment_lock():
+            return self._prepare_candidate_locked(
+                approved_plan
+            )
+
+    def _prepare_candidate_locked(
         self,
         approved_plan: KnowledgeCandidatePlan,
     ) -> KnowledgeSyncResult:

@@ -51,6 +51,19 @@ class PrepareCandidateKnowledgeManager(KnowledgeManager):
         self.calls: list[tuple[object, ...]] = []
 
     @contextmanager
+    def deployment_lock(self) -> Iterator[None]:
+        self.calls.append(
+            ("lock_enter",)
+        )
+
+        try:
+            yield
+        finally:
+            self.calls.append(
+                ("lock_exit",)
+            )
+
+    @contextmanager
     def staged_source(self) -> Iterator[Path]:
         self.calls.append(
             ("staging_enter", self.staging_path)
@@ -292,17 +305,25 @@ class KnowledgePrepareCandidateTests(unittest.TestCase):
 
         self.assertEqual(
             manager.calls[0],
+            ("lock_enter",),
+        )
+        self.assertEqual(
+            manager.calls[1],
             (
                 "staging_enter",
                 manager.staging_path,
             ),
         )
         self.assertEqual(
-            manager.calls[-1],
+            manager.calls[-2],
             (
                 "staging_exit",
                 manager.staging_path,
             ),
+        )
+        self.assertEqual(
+            manager.calls[-1],
+            ("lock_exit",),
         )
 
     def test_rejects_stale_plan_before_sync(
