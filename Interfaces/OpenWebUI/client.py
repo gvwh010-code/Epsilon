@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 from types import TracebackType
 
@@ -105,6 +106,168 @@ class OpenWebUIClient:
             )
 
         return payload
+
+
+    def export_model(
+        self,
+        model_id: str,
+    ) -> dict[str, Any]:
+        """Exporta exactamente un modelo por su id canónico."""
+
+        if (
+            not isinstance(model_id, str)
+            or not model_id.strip()
+        ):
+            raise ValueError(
+                "El identificador del modelo no es válido."
+            )
+
+        canonical_id = model_id.strip()
+
+        matches = [
+            model
+            for model in self.export_models()
+            if model.get("id") == canonical_id
+        ]
+
+        if not matches:
+            raise OpenWebUIClientError(
+                f"No existe el modelo exportable "
+                f"{canonical_id!r}."
+            )
+
+        if len(matches) != 1:
+            raise OpenWebUIClientError(
+                f"Open WebUI exportó más de un modelo "
+                f"con el id {canonical_id!r}."
+            )
+
+        return deepcopy(matches[0])
+
+    @staticmethod
+    def _build_model_update_payload(
+        model: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Construye exclusivamente un ModelForm completo."""
+
+        if not isinstance(model, dict):
+            raise ValueError(
+                "El modelo a actualizar debe ser un objeto."
+            )
+
+        model_id = model.get("id")
+
+        if (
+            not isinstance(model_id, str)
+            or not model_id.strip()
+        ):
+            raise ValueError(
+                "El modelo no contiene un id válido."
+            )
+
+        name = model.get("name")
+
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+        ):
+            raise ValueError(
+                "El modelo no contiene un nombre válido."
+            )
+
+        meta = model.get("meta")
+
+        if not isinstance(meta, dict):
+            raise ValueError(
+                "El modelo no contiene meta válido."
+            )
+
+        params = model.get("params")
+
+        if not isinstance(params, dict):
+            raise ValueError(
+                "El modelo no contiene params válido."
+            )
+
+        if "base_model_id" not in model:
+            raise ValueError(
+                "El modelo completo no contiene base_model_id."
+            )
+
+        base_model_id = model.get("base_model_id")
+
+        if (
+            base_model_id is not None
+            and (
+                not isinstance(base_model_id, str)
+                or not base_model_id.strip()
+            )
+        ):
+            raise ValueError(
+                "El modelo contiene un base_model_id inválido."
+            )
+
+        access_grants = model.get("access_grants")
+
+        if (
+            not isinstance(access_grants, list)
+            or not all(
+                item is None
+                or isinstance(item, dict)
+                for item in access_grants
+            )
+        ):
+            raise ValueError(
+                "El modelo no contiene access_grants válidos."
+            )
+
+        is_active = model.get("is_active")
+
+        if not isinstance(is_active, bool):
+            raise ValueError(
+                "El modelo no contiene is_active válido."
+            )
+
+        return deepcopy(
+            {
+                "id": model_id.strip(),
+                "base_model_id": base_model_id,
+                "name": name,
+                "meta": meta,
+                "params": params,
+                "access_grants": access_grants,
+                "is_active": is_active,
+            }
+        )
+
+    def update_model(
+        self,
+        model: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Actualiza un único modelo mediante ModelForm."""
+
+        payload = self._build_model_update_payload(
+            model
+        )
+
+        result = self.post(
+            "/api/v1/models/model/update",
+            payload,
+        )
+
+        if not isinstance(result, dict):
+            raise OpenWebUIClientError(
+                "Open WebUI no devolvió el modelo actualizado."
+            )
+
+        if result.get("id") != payload["id"]:
+            raise OpenWebUIClientError(
+                "Open WebUI devolvió un modelo diferente "
+                "del solicitado."
+            )
+
+        return result
+
 
     def import_models(
         self,
