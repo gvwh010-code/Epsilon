@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Any, Iterator
 
 from config import Config
@@ -45,6 +46,14 @@ class KnowledgeManager(SyncModule):
     """Compara Knowledge local con Open WebUI sin modificarlo."""
 
     name = "Knowledge"
+
+    verification_retry_delays = (
+        0.0,
+        0.5,
+        1.0,
+        2.0,
+        4.0,
+    )
 
     def __init__(
         self,
@@ -1255,6 +1264,76 @@ class KnowledgeManager(SyncModule):
 
         return current_slot
 
+
+    def _wait_for_candidate_convergence(
+        self,
+        plan: KnowledgeCandidatePlan,
+        staging_directory: Path,
+    ) -> KnowledgeDiffResult:
+        """Espera que Open WebUI refleje la sincronización."""
+
+        expected_file_count = (
+            plan.diff.added
+            + plan.diff.modified
+            + plan.diff.unmodified
+        )
+        last_reason = "estado remoto todavía no disponible"
+
+        for delay in self.verification_retry_delays:
+            if delay > 0:
+                time.sleep(delay)
+
+            verified_diff = (
+                self._plan_for_slot_from_staging(
+                    plan.candidate_slot,
+                    staging_directory,
+                    slot_role="candidato preparado",
+                )
+            )
+
+            if (
+                verified_diff.manifest_digest
+                != plan.diff.manifest_digest
+            ):
+                raise KnowledgeManagerError(
+                    "La verificación posterior utilizó un "
+                    "manifiesto diferente del plan aprobado."
+                )
+
+            if verified_diff.failed:
+                last_reason = (
+                    "la verificación informó errores: "
+                    + "; ".join(verified_diff.errors)
+                )
+                continue
+
+            if verified_diff.has_changes:
+                last_reason = (
+                    "el slot candidato conserva diferencias: "
+                    f"{verified_diff.total_changes} pendientes"
+                )
+                continue
+
+            if (
+                verified_diff.unmodified
+                != expected_file_count
+            ):
+                last_reason = (
+                    "la cantidad de archivos verificados "
+                    "no coincide con el manifiesto"
+                )
+                continue
+
+            return verified_diff
+
+        raise KnowledgeManagerError(
+            "El slot candidato no alcanzó un estado "
+            "convergente después de "
+            f"{len(self.verification_retry_delays)} intentos: "
+            f"{last_reason}."
+        )
+
+
     def prepare_candidate(
         self,
         approved_plan: KnowledgeCandidatePlan,
@@ -1310,50 +1389,10 @@ class KnowledgeManager(SyncModule):
                     "diferente del plan aprobado."
                 )
 
-            verified_diff = (
-                self._plan_for_slot_from_staging(
-                    validated_plan.candidate_slot,
-                    staging_directory,
-                    slot_role="candidato preparado",
-                )
+            self._wait_for_candidate_convergence(
+                validated_plan,
+                staging_directory,
             )
-
-            if (
-                verified_diff.manifest_digest
-                != validated_plan.diff.manifest_digest
-            ):
-                raise KnowledgeManagerError(
-                    "La verificación posterior utilizó un "
-                    "manifiesto diferente del plan aprobado."
-                )
-
-            if verified_diff.failed:
-                raise KnowledgeManagerError(
-                    "La verificación posterior del candidato "
-                    "informó errores: "
-                    + "; ".join(verified_diff.errors)
-                )
-
-            if verified_diff.has_changes:
-                raise KnowledgeManagerError(
-                    "El slot candidato conserva diferencias "
-                    "después de la sincronización."
-                )
-
-            expected_file_count = (
-                validated_plan.diff.added
-                + validated_plan.diff.modified
-                + validated_plan.diff.unmodified
-            )
-
-            if (
-                verified_diff.unmodified
-                != expected_file_count
-            ):
-                raise KnowledgeManagerError(
-                    "La cantidad de archivos verificados en el "
-                    "slot candidato no coincide con el manifiesto."
-                )
 
             self._require_active_slot(
                 validated_plan.active_slot

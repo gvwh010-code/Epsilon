@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 from typing import Iterator
 
 
@@ -29,6 +30,12 @@ CLEAN_DIFF_DIGEST = "c" * 64
 
 class PrepareCandidateKnowledgeManager(KnowledgeManager):
     """Manager simulado sin red ni escritura remota."""
+
+    verification_retry_delays = (
+        0.0,
+        0.0,
+        0.0,
+    )
 
     def __init__(
         self,
@@ -351,6 +358,30 @@ class KnowledgePrepareCandidateTests(unittest.TestCase):
                 for call in manager.calls
             )
         )
+
+
+    def test_retries_until_candidate_converges(
+        self,
+    ) -> None:
+        manager = self.build_manager()
+        pending = self.build_pending_diff()
+        clean = self.build_clean_diff()
+
+        with patch.object(
+            manager,
+            "_plan_for_slot_from_staging",
+            side_effect=(pending, clean),
+        ) as verification:
+            result = manager.prepare_candidate(
+                self.build_plan()
+            )
+
+        self.assertEqual(result.kb_id, "green-id")
+        self.assertEqual(
+            verification.call_count,
+            2,
+        )
+
 
     def test_rejects_sync_manifest_mismatch(
         self,
