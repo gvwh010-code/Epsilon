@@ -21,6 +21,7 @@ from knowledge import (
     KnowledgeCandidatePlan,
     KnowledgeManager,
     KnowledgeManagerError,
+    KnowledgeSwitchResult,
 )
 
 from knowledge_target import (
@@ -1133,6 +1134,162 @@ def run_verify() -> int:
 
     return 0
 
+
+def print_knowledge_switch(
+    result: KnowledgeSwitchResult,
+) -> None:
+    """Muestra un intercambio Blue–Green verificado."""
+
+    print()
+    print("===================================")
+    print("    EPSILON KNOWLEDGE SWITCHED")
+    print("===================================\n")
+
+    print("✓ Intercambio Blue–Green completado y verificado.")
+    print()
+    print("Slot anterior:")
+    print(f"  Nombre: {result.previous_slot.name}")
+    print(f"  KB ID:  {result.previous_slot.kb_id}")
+    print()
+    print("Nuevo slot activo:")
+    print(f"  Nombre: {result.active_slot.name}")
+    print(f"  KB ID:  {result.active_slot.kb_id}")
+    print()
+    print(
+        "Manifest digest: "
+        f"{result.manifest_digest[:12]}"
+    )
+    print()
+    print(
+        "El slot anterior permanece disponible como "
+        "candidato de rollback."
+    )
+    print(
+        "No se modificaron archivos Knowledge durante "
+        "el intercambio."
+    )
+
+
+def run_switch_knowledge(
+    confirmed: bool,
+) -> int:
+    """Activa el slot Knowledge inactivo ya preparado."""
+
+    try:
+        config = Config()
+
+        with OpenWebUIClient(config) as client:
+            manager = build_knowledge_manager(
+                config,
+                client,
+            )
+
+            approved_plan = manager.plan_candidate()
+
+            print_candidate_plan(
+                approved_plan,
+                footer=None,
+            )
+
+            if approved_plan.diff.failed:
+                detail = (
+                    "; ".join(approved_plan.diff.errors)
+                    if approved_plan.diff.errors
+                    else "errores no especificados"
+                )
+
+                print()
+                print(
+                    "✗ El slot candidato no superó "
+                    "la verificación."
+                )
+                print(f"  Motivo: {detail}")
+                print("No se aplicaron cambios.")
+                return 1
+
+            if approved_plan.diff.has_changes:
+                print()
+                print(
+                    "✗ El slot candidato todavía no está "
+                    "preparado para activarse."
+                )
+                print(
+                    "  Ejecuta primero "
+                    "'knowledge prepare --yes'."
+                )
+                print("No se aplicaron cambios.")
+                return 2
+
+            if approved_plan.diff.unmodified <= 0:
+                print()
+                print(
+                    "✗ El slot candidato no contiene archivos "
+                    "verificados para activar."
+                )
+                print("No se aplicaron cambios.")
+                return 1
+
+            if not confirmed:
+                print()
+                print("✗ Intercambio no autorizado.")
+                print(
+                    "  Revisa el plan y repite el comando con "
+                    "'knowledge switch --yes' para aprobarlo."
+                )
+                print("No se aplicaron cambios.")
+                return 2
+
+            try:
+                result = manager.switch_candidate(
+                    approved_plan
+                )
+
+            except (
+                FileNotFoundError,
+                OSError,
+                RuntimeError,
+                ValueError,
+                KnowledgeManagerError,
+                OpenWebUIClientError,
+            ) as error:
+                print()
+                print(
+                    "✗ El intercambio Blue–Green falló: "
+                    f"{error}"
+                )
+                print(
+                    "No se debe asumir qué slot permanece "
+                    "activo sin verificarlo."
+                )
+                print(
+                    "Ejecuta 'verify' y luego "
+                    "'plan --candidate' antes de continuar."
+                )
+                return 1
+
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        KnowledgeManagerError,
+        OpenWebUIClientError,
+    ) as error:
+        print("===================================")
+        print("    EPSILON KNOWLEDGE SWITCH")
+        print("===================================\n")
+        print(
+            "✗ No fue posible construir el plan "
+            f"de intercambio: {error}"
+        )
+        print()
+        print("No se aplicaron cambios.")
+        return 1
+
+    print_knowledge_switch(result)
+    return 0
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construye la interfaz de comandos de Epsilon."""
 
@@ -1195,6 +1352,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    switch_parser = knowledge_subparsers.add_parser(
+        "switch",
+        help=(
+            "Activa el slot Knowledge inactivo "
+            "previamente preparado."
+        ),
+    )
+
+    switch_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "Autoriza el intercambio Blue–Green "
+            "del modelo configurado."
+        ),
+    )
+
     subparsers.add_parser(
         "verify",
         help="Verifica el estado activo sin aplicar cambios.",
@@ -1227,9 +1401,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.yes
             )
 
+        if arguments.knowledge_command == "switch":
+            return run_switch_knowledge(
+                arguments.yes
+            )
+
         parser.error(
-            "Knowledge requiere un subcomando, "
-            "por ejemplo: knowledge prepare"
+            "Knowledge requiere un subcomando: "
+            "knowledge prepare o knowledge switch"
         )
 
     if arguments.command == "verify":
