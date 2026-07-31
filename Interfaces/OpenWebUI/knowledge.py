@@ -633,8 +633,15 @@ class KnowledgeManager(SyncModule):
         source_path: Path,
         *,
         kb_id: str,
+        operation: str = "diff",
     ) -> dict[str, Any]:
-        """Ejecuta el adaptador con la credencial solo en el subproceso."""
+        """Ejecuta una operación controlada mediante el adaptador."""
+
+        if operation not in {"diff", "sync"}:
+            raise KnowledgeManagerError(
+                "La operación solicitada al adaptador "
+                "de Knowledge no es válida."
+            )
 
         environment = os.environ.copy()
         environment["PYTHONIOENCODING"] = "utf-8"
@@ -644,10 +651,10 @@ class KnowledgeManager(SyncModule):
             self.config.require_api_key()
         )
 
-        command = [
+        process_command = [
             str(self.python_executable),
             str(self.bridge_path),
-            "diff",
+            operation,
             "--source-name",
             self.source_name,
             "--kb-id",
@@ -660,7 +667,7 @@ class KnowledgeManager(SyncModule):
 
         try:
             result = subprocess.run(
-                command,
+                process_command,
                 cwd=self.project_root,
                 capture_output=True,
                 text=True,
@@ -673,7 +680,7 @@ class KnowledgeManager(SyncModule):
 
         except subprocess.TimeoutExpired as error:
             raise KnowledgeManagerError(
-                "La comparación de Knowledge superó "
+                "La operación de Knowledge superó "
                 "el tiempo máximo permitido."
             ) from error
 
@@ -703,6 +710,12 @@ class KnowledgeManager(SyncModule):
                 "El adaptador de oikb no devolvió un objeto JSON."
             )
 
+        if payload.get("command") != operation:
+            raise KnowledgeManagerError(
+                "El adaptador de oikb respondió por una "
+                "operación diferente de la solicitada."
+            )
+
         if result.returncode != 0 or payload.get("ok") is not True:
             message = payload.get("error")
 
@@ -717,7 +730,8 @@ class KnowledgeManager(SyncModule):
                     )
 
             raise KnowledgeManagerError(
-                message or "La comparación de Knowledge falló."
+                message
+                or f"La operación Knowledge '{operation}' falló."
             )
 
         return payload
