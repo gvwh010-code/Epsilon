@@ -59,6 +59,7 @@ class FakeClient:
         self.current_model = deepcopy(model)
         self.candidate_record = deepcopy(candidate_record)
         self.updates: list[dict] = []
+        self.update_include_access_grants: list[bool] = []
         self.export_calls = 0
         self.prewrite_override: dict | None = None
         self.mutate_first_update = False
@@ -78,16 +79,31 @@ class FakeClient:
     def get(self, endpoint: str) -> dict:
         return deepcopy(self.candidate_record)
 
-    def update_model(self, model: dict) -> dict:
+    def update_model(
+        self,
+        model: dict,
+        *,
+        include_access_grants: bool = True,
+    ) -> dict:
         update_number = len(self.updates) + 1
         self.updates.append(deepcopy(model))
+        self.update_include_access_grants.append(
+            include_access_grants
+        )
 
         if update_number in self.fail_update_numbers:
             raise RuntimeError(
                 f"simulated update failure {update_number}"
             )
 
-        self.current_model = deepcopy(model)
+        updated_model = deepcopy(model)
+
+        if not include_access_grants:
+            updated_model["access_grants"] = deepcopy(
+                self.current_model["access_grants"]
+            )
+
+        self.current_model = updated_model
         self.current_model["updated_at"] = (
             self.current_model.get("updated_at", 0) + 1
         )
@@ -278,6 +294,10 @@ class KnowledgeSwitchOperationTests(unittest.TestCase):
             self.green,
         )
         self.assertEqual(len(client.updates), 1)
+        self.assertEqual(
+            client.update_include_access_grants,
+            [False],
+        )
 
         ids = [
             entry["id"]

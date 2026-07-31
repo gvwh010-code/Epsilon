@@ -186,6 +186,41 @@ class OpenWebUIClientModelTests(unittest.TestCase):
             model["params"],
         )
 
+    def test_update_can_omit_access_grants(
+        self,
+    ) -> None:
+        model = self.build_model()
+        client = RecordingOpenWebUIClient(
+            response=model
+        )
+
+        client.update_model(
+            model,
+            include_access_grants=False,
+        )
+
+        endpoint, payload = client.posts[0]
+
+        self.assertEqual(
+            endpoint,
+            "/api/v1/models/model/update",
+        )
+        self.assertNotIn(
+            "access_grants",
+            payload,
+        )
+        self.assertEqual(
+            set(payload),
+            {
+                "id",
+                "base_model_id",
+                "name",
+                "meta",
+                "params",
+                "is_active",
+            },
+        )
+
     def test_update_payload_is_a_deep_copy(
         self,
     ) -> None:

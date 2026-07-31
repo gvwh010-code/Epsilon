@@ -470,10 +470,71 @@ class KnowledgeManager(SyncModule):
 
 
     @staticmethod
+    def _semantic_access_grants(
+        access_grants: list[Any],
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Normaliza los permisos según su efecto real."""
+
+        normalized: set[tuple[str, str, str]] = set()
+
+        for index, grant in enumerate(access_grants):
+            if grant is None:
+                continue
+
+            if not isinstance(grant, dict):
+                raise KnowledgeManagerError(
+                    "El modelo exportado contiene un "
+                    "access_grant inválido en la posición "
+                    f"{index}."
+                )
+
+            principal_type = grant.get("principal_type")
+            principal_id = grant.get("principal_id")
+            permission = grant.get("permission")
+
+            if principal_type not in {
+                "user",
+                "group",
+                "anyone",
+            }:
+                raise KnowledgeManagerError(
+                    "El modelo exportado contiene un "
+                    "principal_type inválido en la posición "
+                    f"{index}."
+                )
+
+            if (
+                not isinstance(principal_id, str)
+                or not principal_id.strip()
+            ):
+                raise KnowledgeManagerError(
+                    "El modelo exportado contiene un "
+                    "principal_id inválido en la posición "
+                    f"{index}."
+                )
+
+            if permission not in {"read", "write"}:
+                raise KnowledgeManagerError(
+                    "El modelo exportado contiene un permiso "
+                    f"inválido en la posición {index}."
+                )
+
+            normalized.add(
+                (
+                    principal_type,
+                    principal_id.strip(),
+                    permission,
+                )
+            )
+
+        return tuple(sorted(normalized))
+
+    @classmethod
     def _model_state_without_knowledge(
+        cls,
         model: dict[str, Any],
     ) -> dict[str, Any]:
-        """Extrae el ModelForm ignorando solo meta.knowledge."""
+        """Extrae el ModelForm editable sin meta.knowledge."""
 
         if not isinstance(model, dict):
             raise KnowledgeManagerError(
@@ -570,7 +631,11 @@ class KnowledgeManager(SyncModule):
             "name": name,
             "meta": semantic_meta,
             "params": deepcopy(params),
-            "access_grants": deepcopy(access_grants),
+            "access_grants": (
+                cls._semantic_access_grants(
+                    access_grants
+                )
+            ),
             "is_active": is_active,
         }
 
@@ -2043,7 +2108,8 @@ class KnowledgeManager(SyncModule):
         """Restaura y verifica el modelo anterior."""
 
         rollback_response = self.client.update_model(
-            original_model
+            original_model,
+            include_access_grants=False,
         )
 
         self._require_expected_model_state(
@@ -2163,7 +2229,8 @@ class KnowledgeManager(SyncModule):
                 write_attempted = True
 
                 update_response = self.client.update_model(
-                    switched_model
+                    switched_model,
+                    include_access_grants=False,
                 )
 
                 self._require_expected_model_state(

@@ -197,6 +197,80 @@ class KnowledgeSwitchModelTests(unittest.TestCase):
             exported,
         )
 
+    def test_semantic_comparison_ignores_grant_metadata(
+        self,
+    ) -> None:
+        original = self.build_model()
+        exported = deepcopy(original)
+
+        original["access_grants"] = [
+            {
+                "id": "old-id",
+                "resource_type": "model",
+                "resource_id": "epsilon",
+                "principal_type": "group",
+                "principal_id": "group-1",
+                "permission": "read",
+                "created_at": 10,
+            },
+        ]
+
+        exported["access_grants"] = [
+            {
+                "id": "new-id",
+                "resource_type": "model",
+                "resource_id": "epsilon",
+                "principal_type": "group",
+                "principal_id": "group-1",
+                "permission": "read",
+                "created_at": 999,
+            },
+        ]
+
+        KnowledgeManager._require_same_model_outside_knowledge(
+            original,
+            exported,
+        )
+
+    def test_semantic_comparison_rejects_grant_change(
+        self,
+    ) -> None:
+        original = self.build_model()
+        changed = deepcopy(original)
+
+        original["access_grants"] = [
+            {
+                "id": "old-id",
+                "resource_type": "model",
+                "resource_id": "epsilon",
+                "principal_type": "group",
+                "principal_id": "group-1",
+                "permission": "read",
+                "created_at": 10,
+            },
+        ]
+
+        changed["access_grants"] = [
+            {
+                "id": "new-id",
+                "resource_type": "model",
+                "resource_id": "epsilon",
+                "principal_type": "group",
+                "principal_id": "group-1",
+                "permission": "write",
+                "created_at": 999,
+            },
+        ]
+
+        with self.assertRaisesRegex(
+            KnowledgeManagerError,
+            "ajenos a meta.knowledge",
+        ):
+            KnowledgeManager._require_same_model_outside_knowledge(
+                original,
+                changed,
+            )
+
     def test_semantic_comparison_rejects_params_change(
         self,
     ) -> None:

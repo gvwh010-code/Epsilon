@@ -147,6 +147,8 @@ class OpenWebUIClient:
     @staticmethod
     def _build_model_update_payload(
         model: dict[str, Any],
+        *,
+        include_access_grants: bool = True,
     ) -> dict[str, Any]:
         """Construye exclusivamente un ModelForm completo."""
 
@@ -207,20 +209,6 @@ class OpenWebUIClient:
                 "El modelo contiene un base_model_id inválido."
             )
 
-        access_grants = model.get("access_grants")
-
-        if (
-            not isinstance(access_grants, list)
-            or not all(
-                item is None
-                or isinstance(item, dict)
-                for item in access_grants
-            )
-        ):
-            raise ValueError(
-                "El modelo no contiene access_grants válidos."
-            )
-
         is_active = model.get("is_active")
 
         if not isinstance(is_active, bool):
@@ -228,26 +216,46 @@ class OpenWebUIClient:
                 "El modelo no contiene is_active válido."
             )
 
-        return deepcopy(
-            {
-                "id": model_id.strip(),
-                "base_model_id": base_model_id,
-                "name": name,
-                "meta": meta,
-                "params": params,
-                "access_grants": access_grants,
-                "is_active": is_active,
-            }
-        )
+        payload: dict[str, Any] = {
+            "id": model_id.strip(),
+            "base_model_id": base_model_id,
+            "name": name,
+            "meta": meta,
+            "params": params,
+            "is_active": is_active,
+        }
+
+        if include_access_grants:
+            access_grants = model.get("access_grants")
+
+            if (
+                not isinstance(access_grants, list)
+                or not all(
+                    item is None
+                    or isinstance(item, dict)
+                    for item in access_grants
+                )
+            ):
+                raise ValueError(
+                    "El modelo no contiene "
+                    "access_grants válidos."
+                )
+
+            payload["access_grants"] = access_grants
+
+        return deepcopy(payload)
 
     def update_model(
         self,
         model: dict[str, Any],
+        *,
+        include_access_grants: bool = True,
     ) -> dict[str, Any]:
         """Actualiza un único modelo mediante ModelForm."""
 
         payload = self._build_model_update_payload(
-            model
+            model,
+            include_access_grants=include_access_grants,
         )
 
         result = self.post(
