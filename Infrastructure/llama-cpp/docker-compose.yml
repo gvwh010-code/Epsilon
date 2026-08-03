@@ -1,0 +1,56 @@
+name: epsilon-llamacpp
+
+services:
+  llama-cpp:
+    image: ${LLAMA_CPP_IMAGE}
+    container_name: epsilon-llamacpp
+    restart: unless-stopped
+
+    runtime: nvidia
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    ports:
+      - "127.0.0.1:10000:8080"
+
+    volumes:
+      - ../models/gemma4-12b/gemma4-12b-Q4_K_M.gguf:/models/gemma4-12b.gguf:ro
+      - ../models/gemma4-12b/mmproj.gguf:/models/mmproj.gguf:ro
+      - ./templates/gemma4-12b.jinja:/templates/gemma4-12b.jinja:ro
+
+    command:
+      - --model
+      - /models/gemma4-12b.gguf
+      - --mmproj
+      - /models/mmproj.gguf
+      - --alias
+      - gemma4-12b-llamacpp
+      - --ctx-size
+      - "16384"
+      - --n-gpu-layers
+      - "999"
+      - --parallel
+      - "1"
+      - --flash-attn
+      - "on"
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --reasoning
+      - "on"
+      - --reasoning-budget
+      - "256"
+      - --jinja
+      - --chat-template-file
+      - /templates/gemma4-12b.jinja
+
+    networks:
+      - epsilon-services
+
+networks:
+  epsilon-services:
+    external: true
+    name: epsilon-services

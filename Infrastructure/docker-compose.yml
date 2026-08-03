@@ -10,9 +10,19 @@ services:
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       WEBUI_URL: http://localhost:8081
+      ENABLE_KB_EXEC: "True"
 
     volumes:
       - ./openwebui-data:/app/backend/data
 
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+    networks:
+      - default
+      - epsilon-services
+
+networks:
+  epsilon-services:
+    external: true
+    name: epsilon-services

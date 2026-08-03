@@ -52,3 +52,8 @@ Backups/
 
 # Local SearXNG environment
 docker/searxng/.env
+
+
+# Jinja
+Infrastructure/models/
+Infrastructure/llama-cpp/.env
