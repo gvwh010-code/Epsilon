@@ -2107,18 +2107,10 @@ class KnowledgeManager(SyncModule):
     ) -> None:
         """Restaura y verifica el modelo anterior."""
 
-        rollback_response = self.client.update_model(
-            original_model,
-            include_access_grants=False,
-        )
+        rollback_model = dict(original_model)
+        rollback_model.pop("access_grants", None)
 
-        self._require_expected_model_state(
-            original_model,
-            original_model,
-            rollback_response,
-            target,
-            original_slot,
-        )
+        self.client.import_models([rollback_model])
 
         rollback_export = self.client.export_model(
             target.model_id
@@ -2228,18 +2220,10 @@ class KnowledgeManager(SyncModule):
             try:
                 write_attempted = True
 
-                update_response = self.client.update_model(
-                    switched_model,
-                    include_access_grants=False,
-                )
+                import_model = dict(switched_model)
+                import_model.pop("access_grants", None)
 
-                self._require_expected_model_state(
-                    original_model,
-                    switched_model,
-                    update_response,
-                    target,
-                    validated_plan.candidate_slot,
-                )
+                self.client.import_models([import_model])
 
                 updated_export = self.client.export_model(
                     target.model_id

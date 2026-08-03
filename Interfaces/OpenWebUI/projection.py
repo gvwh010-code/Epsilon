@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,8 @@ class ProjectionManager(SyncModule):
         self,
         project_root: Path,
         client: Any,
-        model_id: str = "epsilon",
-        base_model_id: str = "gemma4:12b",
+        model_id: str,
+        base_model_id: str,
     ):
         self.project_root = project_root
         self.client = client
@@ -165,6 +166,18 @@ class ProjectionManager(SyncModule):
             else True
         )
 
+        remote_meta = (
+            remote_model.get("meta")
+            if remote_model is not None
+            else None
+        )
+
+        meta = (
+            deepcopy(remote_meta)
+            if isinstance(remote_meta, dict)
+            else {}
+        )
+
         remote_params = (
             remote_model.get("params")
             if remote_model is not None
@@ -185,7 +198,7 @@ class ProjectionManager(SyncModule):
             "id": self.model_id,
             "name": model_name,
             "base_model_id": self.base_model_id,
-            "meta": {},
+            "meta": meta,
             "params": params,
             "is_active": is_active,
         }
@@ -236,9 +249,9 @@ class ProjectionManager(SyncModule):
                 "pero el modelo ya no existe."
             )
 
-        import_model = self.build_import_model(remote_model)
+        desired_model = self.build_import_model(remote_model)
 
-        self.client.import_models([import_model])
+        self.client.import_models([desired_model])
 
         verification_plan = self.plan()
 

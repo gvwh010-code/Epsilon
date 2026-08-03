@@ -129,6 +129,13 @@ class Config:
         ).strip()
     )
 
+    openwebui_base_model: str = field(
+        default_factory=lambda: read_setting(
+            "EPSILON_OPENWEBUI_BASE_MODEL",
+            "gemma4-12b-llamacpp",
+        ).strip()
+    )
+
     ollama_url: str = field(
         default_factory=lambda: read_setting(
             "EPSILON_OLLAMA_URL",
