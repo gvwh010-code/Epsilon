@@ -42,7 +42,7 @@ services:
       - --reasoning
       - "on"
       - --reasoning-budget
-      - "256"
+      - "1"
       - --jinja
       - --chat-template-file
       - /templates/gemma4-12b.jinja

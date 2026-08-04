@@ -1,0 +1,100 @@
+cd /mnt/TOSHIBA/Epsilon
+
+# editas EPSILON_PROJECTION.md
+
+python3 Interfaces/OpenWebUI/sync.py plan
+
+# revisas que el cambio esperado sea correcto
+
+python3 Interfaces/OpenWebUI/sync.py apply --yes
+
+python3 Interfaces/OpenWebUI/sync.py verify
+
+python3 Interfaces/OpenWebUI/sync.py doctor
+
+
+python3 Interfaces/OpenWebUI/sync.py plan
+
+
+cd /mnt/TOSHIBA/Epsilon
+
+# 1. Ver qué cambiaría
+python3 Interfaces/OpenWebUI/sync.py plan
+
+# 2. Si es únicamente Projection y estás conforme
+python3 Interfaces/OpenWebUI/sync.py apply --yes
+
+# 3. Confirmar
+python3 Interfaces/OpenWebUI/sync.py verify
+
+# 4. Solo ante problemas / mantenimiento
+python3 Interfaces/OpenWebUI/sync.py doctor
+
+
+
+
+
+
+1. Crear/modificar archivos en Knowledge/
+2. Añadir sus archivos a knowledge_manifest.txt
+3. sync.py plan
+4. knowledge prepare
+5. knowledge switch
+6. sync.py verify
+7. git commit
+
+
+
+python3 Interfaces/OpenWebUI/sync.py plan
+
+python3 Interfaces/OpenWebUI/sync.py knowledge prepare
+# verifica el slot inactivo
+
+python3 Interfaces/OpenWebUI/sync.py knowledge switch
+# activa el candidato
+
+python3 Interfaces/OpenWebUI/sync.py verify
+
+
+
+
+python3 Interfaces/OpenWebUI/sync.py plan
+python3 Interfaces/OpenWebUI/sync.py apply --yes
+python3 Interfaces/OpenWebUI/sync.py verify
+
+
+
+
+# 1. Editas/creas los archivos en Knowledge/
+
+# 2. Añades o quitas sus rutas en:
+# Interfaces/OpenWebUI/knowledge_manifest.txt
+
+# 3. Ves qué cambiaría
+python3 Interfaces/OpenWebUI/sync.py plan
+
+# 4. Actualiza SOLO el slot inactivo y lo verifica
+python3 Interfaces/OpenWebUI/sync.py knowledge prepare --yes
+
+# 5. Si prepare terminó correctamente, lo convierte en activo
+python3 Interfaces/OpenWebUI/sync.py knowledge switch --yes
+
+# 6. Confirma que repo y estado activo coinciden
+python3 Interfaces/OpenWebUI/sync.py verify
+
+
+
+
+
+python3 Interfaces/OpenWebUI/sync.py plan
+
+# Projection
+python3 Interfaces/OpenWebUI/sync.py apply --yes
+
+# Knowledge
+python3 Interfaces/OpenWebUI/sync.py knowledge prepare --yes
+python3 Interfaces/OpenWebUI/sync.py knowledge switch --yes
+
+# Todo
+python3 Interfaces/OpenWebUI/sync.py verify
+

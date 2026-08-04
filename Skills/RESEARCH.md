@@ -1,116 +1,82 @@
+---
+name: Research
+description: Investiga, busca, comprueba y verifica información externa, actual o incierta usando búsqueda web y fuentes reales antes de responder.
+---
+
 # Research
 
-## Propósito
+## Objetivo
 
-La Skill Research define el método que Epsilon debe seguir cuando una respuesta requiera información externa, documentación, actualidad o verificación de hechos.
+Obtener evidencia externa suficiente para responder con precisión.
 
-Su objetivo es producir respuestas fundamentadas en evidencia, distinguiendo claramente entre información confirmada, inferencias e incertidumbre.
+La búsqueda descubre fuentes. La lectura de una fuente verifica hechos.
 
----
+## Cuándo usar
 
-## Cuándo utilizar esta Skill
+Usa Research cuando el usuario pida investigar, buscar, comprobar o verificar información, o cuando la respuesta dependa de información actual o incierta.
 
-Utiliza Research cuando:
+Si la consulta también depende de un proyecto documentado en Knowledge, consulta primero el Knowledge relevante y después investiga únicamente lo externo.
 
-- el usuario solicite investigar un tema;
-- la respuesta dependa de información actual;
-- sea necesario consultar documentación oficial;
-- existan dudas sobre un hecho;
-- se deban comparar fuentes;
-- el usuario pida verificar información.
+## Flujo obligatorio
 
-No utilices esta Skill cuando la respuesta pueda obtenerse únicamente mediante razonamiento o conocimiento ya disponible.
+Para una investigación web:
 
----
+1. Identifica los hechos centrales que necesitas comprobar.
+2. Usa `search_web` para localizar fuentes.
+3. Examina los resultados y selecciona la fuente más adecuada.
+4. Antes de responder, usa `fetch_url` sobre al menos una fuente que sustente los hechos centrales, siempre que exista una fuente accesible.
+5. Si existe una fuente primaria u oficial adecuada, priorízala.
+6. Compara lo leído con la afirmación que vas a hacer.
+7. Solo entonces responde.
 
-## Método
+`search_web` por sí solo no completa una investigación cuando la respuesta depende de hechos externos verificables.
 
-### 1. Comprender el objetivo
+No respondas basándote únicamente en títulos o snippets si puedes abrir una fuente relevante.
 
-Antes de buscar, identifica exactamente qué quiere saber el usuario.
+## Conflictos con conocimiento previo
 
-Si la petición es ambigua, aclárala antes de investigar.
+La evidencia reciente no debe descartarse únicamente porque contradiga tu conocimiento interno.
 
----
+Si un resultado actual contradice lo que recuerdas:
 
-### 2. Planificar la búsqueda
+1. no elijas todavía ninguna de las dos versiones;
+2. abre una fuente adecuada con `fetch_url`;
+3. determina qué información corresponde a la fecha o versión actual;
+4. responde según la evidencia verificada.
 
-Determina:
+## Fuentes
 
-- qué información necesitas;
-- qué fuentes son más adecuadas;
-- si existen fuentes oficiales.
+Para hechos verificables, prioriza:
 
----
+1. fuentes oficiales o primarias;
+2. documentación;
+3. publicaciones científicas o técnicas;
+4. fuentes secundarias reputadas.
 
-### 3. Obtener evidencia
+Reddit y foros son útiles para experiencias prácticas, problemas reales y opiniones, pero no sustituyen una fuente primaria cuando ésta existe.
 
-Utiliza las Tools disponibles.
+No necesitas consultar varias fuentes si una fuente primaria responde claramente la pregunta. Contrasta más fuentes cuando haya contradicciones, ambigüedad o controversia.
 
-Cuando exista búsqueda web, prioriza:
+## Causalidad e inferencias
 
-- documentación oficial;
-- publicaciones del desarrollador;
-- especificaciones;
-- artículos técnicos;
-- fuentes primarias.
+No inventes explicaciones para completar información ausente.
 
-Las comunidades (Reddit, foros, etc.) son útiles para experiencias, pero no sustituyen la documentación oficial.
+Si el usuario pregunta por qué ocurrió algo, busca una fuente que trate directamente la causa.
 
----
+Si una explicación es razonable pero no está documentada, identifícala como inferencia.
 
-### 4. Contrastar
+## Respuesta
 
-Cuando sea posible:
+Responde directamente.
 
-- compara varias fuentes;
-- identifica coincidencias;
-- detecta contradicciones;
-- indica cuando exista incertidumbre.
+Distingue cuando sea necesario entre:
 
----
+- confirmado;
+- inferencia;
+- incierto.
 
-### 5. Responder
+No inventes nombres, fechas, versiones, cifras, autorías ni fuentes.
 
-La respuesta debe:
+No afirmes haber consultado una fuente que no abriste.
 
-- responder primero la pregunta;
-- citar la evidencia utilizada;
-- separar hechos de opiniones;
-- indicar el nivel de confianza cuando corresponda.
-
----
-
-## Uso de Tools
-
-Research puede utilizar:
-
-- Web Search
-- Lectura de páginas
-- Knowledge
-- Documentación disponible
-
-Knowledge debe consultarse antes de buscar en la web cuando la pregunta sea sobre Epsilon o un proyecto ya documentado.
-
----
-
-## Qué evitar
-
-No:
-
-- inventar fuentes;
-- citar documentación no consultada;
-- presentar rumores como hechos;
-- ocultar contradicciones entre fuentes;
-- responder con exceso de confianza cuando la evidencia sea limitada.
-
----
-
-## Resultado esperado
-
-Al finalizar una investigación, el usuario debe poder distinguir claramente:
-
-- qué está confirmado;
-- qué es una inferencia;    
-- qué permanece incierto;
-- de dónde proviene la información.
+Detén la investigación cuando exista evidencia suficiente.

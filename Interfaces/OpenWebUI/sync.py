@@ -29,6 +29,7 @@ from knowledge_target import (
     load_knowledge_target,
 )
 from projection import ProjectionManager
+from skills import SkillsManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
@@ -521,6 +522,15 @@ def build_projection_manager(
         base_model_id=config.openwebui_base_model,
     )
 
+def build_skills_manager(
+    client: OpenWebUIClient,
+) -> SkillsManager:
+    """Construye el gestor de Skills."""
+
+    return SkillsManager(
+        project_root=PROJECT_ROOT,
+        client=client,
+    )
 
 def build_knowledge_manager(
     config: Config,
@@ -717,7 +727,16 @@ def run_plan(
                 knowledge_result = (
                     knowledge_manager.plan()
                 )
+                print()
+                print("Skills:")
 
+                skills_manager = build_skills_manager(
+                    client,
+                )
+
+                skills_manager.sync(
+                    dry_run=True,
+                )
     except (
         FileNotFoundError,
         OSError,
@@ -878,33 +897,47 @@ def run_prepare_knowledge(
 
 
 def run_apply(confirmed: bool) -> int:
-    """Aplica y verifica Projection con autorización explícita."""
+    """Aplica y verifica Projection y Skills con autorización explícita."""
 
     try:
         config = Config()
 
         with OpenWebUIClient(config) as client:
-            manager = build_projection_manager(
+            projection_manager = build_projection_manager(
                 config,
                 client,
             )
 
-            plan = manager.plan()
+            skills_manager = build_skills_manager(
+                client,
+            )
+
+            projection_plan = projection_manager.plan()
 
             print_plan(
-                plan,
+                projection_plan,
                 footer=None,
             )
 
-            if not plan.has_changes:
+            print()
+            print("Skills:")
+
+            skills_in_sync = skills_manager.sync(
+                dry_run=True,
+            )
+
+            if (
+                not projection_plan.has_changes
+                and skills_in_sync
+            ):
                 print()
                 print(
                     "✓ No había cambios de Projection "
-                    "que aplicar."
+                    "ni Skills que aplicar."
                 )
                 print(
-                    "Knowledge todavía no se aplica "
-                    "automáticamente."
+                    "Knowledge continúa usando su flujo "
+                    "Blue–Green independiente."
                 )
                 return 0
 
@@ -919,7 +952,31 @@ def run_apply(confirmed: bool) -> int:
                 return 2
 
             try:
-                manager.apply(plan)
+                if projection_plan.has_changes:
+                    projection_manager.apply(
+                        projection_plan
+                    )
+
+                if not skills_in_sync:
+                    skills_ok = skills_manager.sync(
+                        dry_run=False,
+                    )
+
+                    if not skills_ok:
+                        raise RuntimeError(
+                            "Skills no pudo completar "
+                            "la sincronización."
+                        )
+
+                skills_verified = skills_manager.sync(
+                    dry_run=True,
+                )
+
+                if not skills_verified:
+                    raise RuntimeError(
+                        "Skills fue actualizada, pero la "
+                        "verificación posterior falló."
+                    )
 
             except (
                 FileNotFoundError,
@@ -951,10 +1008,10 @@ def run_apply(confirmed: bool) -> int:
         return 1
 
     print()
-    print("✓ Projection aplicada y verificada.")
+    print("✓ Projection y Skills reconciliadas.")
     print(
-        "Knowledge todavía no se aplica "
-        "automáticamente."
+        "Knowledge continúa usando su flujo "
+        "Blue–Green independiente."
     )
 
     return 0
@@ -962,6 +1019,7 @@ def run_apply(confirmed: bool) -> int:
 def print_verification(
     plan: Plan,
     knowledge: KnowledgeDiffResult,
+    skills_verified: bool,
 ) -> None:
     """Muestra si Projection y Knowledge coinciden."""
 
@@ -991,6 +1049,11 @@ def print_verification(
 
             for reason in change.reasons:
                 print(f"      - {reason}")
+
+    if skills_verified:
+        print("✓ Skills                 Estado verificado")
+    else:
+        print("✗ Skills                 No coincide con Git")
 
     if knowledge_verified:
         print(
@@ -1025,9 +1088,13 @@ def print_verification(
 
     print()
 
-    if projection_verified and knowledge_verified:
+    if (
+    projection_verified
+    and skills_verified
+    and knowledge_verified
+):
         print(
-            "El estado activo de Projection y Knowledge "
+            "El estado activo de Projection, Skills y Knowledge "
             "coincide con el repositorio."
         )
     else:
@@ -1053,9 +1120,15 @@ def run_verify() -> int:
                 config,
                 client,
             )
+            skills_manager = build_skills_manager(
+                client,
+            )
 
             projection_plan = projection_manager.plan()
             knowledge_result = knowledge_manager.plan()
+            skills_verified = skills_manager.sync(
+                dry_run=True,
+            )
 
     except (
         FileNotFoundError,
@@ -1075,10 +1148,12 @@ def run_verify() -> int:
     print_verification(
         projection_plan,
         knowledge_result,
+        skills_verified,
     )
 
     if (
         projection_plan.has_changes
+        or not skills_verified
         or knowledge_result.failed
         or knowledge_result.has_changes
     ):
