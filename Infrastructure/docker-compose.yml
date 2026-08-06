@@ -11,6 +11,7 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       WEBUI_URL: http://localhost:8081
       ENABLE_KB_EXEC: "True"
+      CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS: "8"
 
     volumes:
       - ./openwebui-data:/app/backend/data
@@ -21,6 +22,57 @@ services:
     networks:
       - default
       - epsilon-services
+
+  research:
+    image: python:3.12-slim
+    container_name: epsilon-research
+    restart: unless-stopped
+
+    working_dir: /app
+
+    command:
+      - python3
+      - -m
+      - Infrastructure.research.server
+
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
+      RESEARCH_SERVICE_HOST: 0.0.0.0
+      RESEARCH_SERVICE_PORT: "8080"
+
+      RESEARCH_SEARXNG_URL: http://searxng-core:8080
+      RESEARCH_LLM_URL: http://epsilon-qwen-test:8080
+      RESEARCH_LLM_MODEL: qwen3.6-35b-a3b-test
+
+    volumes:
+      - ../Tools:/app/Tools:ro
+      - ./research:/app/Infrastructure/research:ro
+
+    ports:
+      - "127.0.0.1:10002:8080"
+
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          urllib.request.urlopen(
+              "http://127.0.0.1:8080/health",
+              timeout=2
+          ).read()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    networks:
+      - epsilon-services
+
 
 networks:
   epsilon-services:
