@@ -30,6 +30,7 @@ from knowledge_target import (
 )
 from projection import ProjectionManager
 from skills import SkillsManager
+from functions_manager import FunctionsManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
@@ -532,6 +533,18 @@ def build_skills_manager(
         client=client,
     )
 
+
+def build_functions_manager(
+    client: OpenWebUIClient,
+) -> FunctionsManager:
+    """Construye el gestor de Functions."""
+
+    return FunctionsManager(
+        project_root=PROJECT_ROOT,
+        client=client,
+    )
+
+
 def build_knowledge_manager(
     config: Config,
     client: OpenWebUIClient,
@@ -737,6 +750,19 @@ def run_plan(
                 skills_manager.sync(
                     dry_run=True,
                 )
+
+                print()
+                print("Functions:")
+
+                functions_manager = (
+                    build_functions_manager(
+                        client,
+                    )
+                )
+
+                functions_manager.sync(
+                    dry_run=True,
+                )
     except (
         FileNotFoundError,
         OSError,
@@ -897,7 +923,7 @@ def run_prepare_knowledge(
 
 
 def run_apply(confirmed: bool) -> int:
-    """Aplica y verifica Projection y Skills con autorización explícita."""
+    """Aplica y verifica Projection, Skills y Functions."""
 
     try:
         config = Config()
@@ -909,6 +935,10 @@ def run_apply(confirmed: bool) -> int:
             )
 
             skills_manager = build_skills_manager(
+                client,
+            )
+
+            functions_manager = build_functions_manager(
                 client,
             )
 
@@ -926,14 +956,22 @@ def run_apply(confirmed: bool) -> int:
                 dry_run=True,
             )
 
+            print()
+            print("Functions:")
+
+            functions_in_sync = functions_manager.sync(
+                dry_run=True,
+            )
+
             if (
                 not projection_plan.has_changes
                 and skills_in_sync
+                and functions_in_sync
             ):
                 print()
                 print(
-                    "✓ No había cambios de Projection "
-                    "ni Skills que aplicar."
+                    "✓ No había cambios de Projection, "
+                    "Skills ni Functions que aplicar."
                 )
                 print(
                     "Knowledge continúa usando su flujo "
@@ -968,6 +1006,19 @@ def run_apply(confirmed: bool) -> int:
                             "la sincronización."
                         )
 
+                if not functions_in_sync:
+                    functions_ok = (
+                        functions_manager.sync(
+                            dry_run=False,
+                        )
+                    )
+
+                    if not functions_ok:
+                        raise RuntimeError(
+                            "Functions no pudo completar "
+                            "la sincronización."
+                        )
+
                 skills_verified = skills_manager.sync(
                     dry_run=True,
                 )
@@ -975,6 +1026,18 @@ def run_apply(confirmed: bool) -> int:
                 if not skills_verified:
                     raise RuntimeError(
                         "Skills fue actualizada, pero la "
+                        "verificación posterior falló."
+                    )
+
+                functions_verified = (
+                    functions_manager.sync(
+                        dry_run=True,
+                    )
+                )
+
+                if not functions_verified:
+                    raise RuntimeError(
+                        "Functions fue actualizada, pero la "
                         "verificación posterior falló."
                     )
 
@@ -1008,7 +1071,9 @@ def run_apply(confirmed: bool) -> int:
         return 1
 
     print()
-    print("✓ Projection y Skills reconciliadas.")
+    print(
+        "✓ Projection, Skills y Functions reconciliadas."
+    )
     print(
         "Knowledge continúa usando su flujo "
         "Blue–Green independiente."
@@ -1020,8 +1085,9 @@ def print_verification(
     plan: Plan,
     knowledge: KnowledgeDiffResult,
     skills_verified: bool,
+    functions_verified: bool,
 ) -> None:
-    """Muestra si Projection y Knowledge coinciden."""
+    """Muestra el estado verificado de la proyección local."""
 
     print("===================================")
     print("       EPSILON VERIFY")
@@ -1054,6 +1120,11 @@ def print_verification(
         print("✓ Skills                 Estado verificado")
     else:
         print("✗ Skills                 No coincide con Git")
+
+    if functions_verified:
+        print("✓ Functions              Estado verificado")
+    else:
+        print("✗ Functions              No coincide con Git")
 
     if knowledge_verified:
         print(
@@ -1089,13 +1160,14 @@ def print_verification(
     print()
 
     if (
-    projection_verified
-    and skills_verified
-    and knowledge_verified
-):
+        projection_verified
+        and skills_verified
+        and functions_verified
+        and knowledge_verified
+    ):
         print(
-            "El estado activo de Projection, Skills y Knowledge "
-            "coincide con el repositorio."
+            "El estado activo de Projection, Skills, Functions "
+            "y Knowledge coincide con el repositorio."
         )
     else:
         print(
@@ -1106,7 +1178,7 @@ def print_verification(
     print("No se aplicaron cambios.")
 
 def run_verify() -> int:
-    """Verifica Projection y Knowledge sin modificar recursos."""
+    """Verifica el estado remoto sin modificar recursos."""
 
     try:
         config = Config()
@@ -1123,10 +1195,18 @@ def run_verify() -> int:
             skills_manager = build_skills_manager(
                 client,
             )
+            functions_manager = build_functions_manager(
+                client,
+            )
 
             projection_plan = projection_manager.plan()
             knowledge_result = knowledge_manager.plan()
+
             skills_verified = skills_manager.sync(
+                dry_run=True,
+            )
+
+            functions_verified = functions_manager.sync(
                 dry_run=True,
             )
 
@@ -1149,11 +1229,13 @@ def run_verify() -> int:
         projection_plan,
         knowledge_result,
         skills_verified,
+        functions_verified,
     )
 
     if (
         projection_plan.has_changes
         or not skills_verified
+        or not functions_verified
         or knowledge_result.failed
         or knowledge_result.has_changes
     ):
