@@ -12,6 +12,9 @@ from Tools.Research.models import (
 
 
 class FakeLLM:
+    def __init__(self):
+        self.selection_calls = []
+
     def plan(self, question):
         return ResearchPlan(
             queries=(
@@ -32,7 +35,21 @@ class FakeLLM:
         *,
         max_sources,
     ):
-        return [0, 1, 2, 3]
+        self.selection_calls.append(
+            {
+                "question": question,
+                "urls": [
+                    result.url
+                    for result in results
+                ],
+                "max_sources": max_sources,
+            }
+        )
+
+        # Elegimos deliberadamente el tercer
+        # resultado primero para verificar que
+        # el controller respeta al selector.
+        return [2, 0, 1, 3]
 
     def synthesize(
         self,
@@ -81,8 +98,10 @@ class ResearchControllerTests(
         searcher = FakeSearcher()
         fetcher = FakeFetcher()
 
+        llm = FakeLLM()
+
         controller = ResearchController(
-            llm=FakeLLM(),
+            llm=llm,
             searcher=searcher,
             fetcher=fetcher,
             max_searches=3,
@@ -101,6 +120,22 @@ class ResearchControllerTests(
         self.assertEqual(
             len(fetcher.calls),
             3,
+        )
+
+        self.assertEqual(
+            len(llm.selection_calls),
+            1,
+        )
+
+        self.assertEqual(
+            fetcher.calls[0],
+            "https://example.com/3",
+        )
+
+        self.assertTrue(
+            result.diagnostics[
+                "source_selector_used"
+            ],
         )
 
         self.assertEqual(

@@ -63,7 +63,12 @@ class WebFetcher:
         request = Request(
             url,
             headers={
-                "Accept": "text/html,text/plain;q=0.9,*/*;q=0.1",
+                "Accept": (
+                    "text/html,"
+                    "text/markdown;q=0.95,"
+                    "text/plain;q=0.9,"
+                    "*/*;q=0.1"
+                ),
                 "User-Agent": (
                     "Mozilla/5.0 "
                     "(compatible; EpsilonResearch/0.1)"
@@ -106,7 +111,10 @@ class WebFetcher:
                 errors="replace",
             )
 
-        if content_type == "text/plain":
+        if content_type in {
+            "text/plain",
+            "text/markdown",
+        }:
             text = _normalize_whitespace(decoded)
 
         elif (

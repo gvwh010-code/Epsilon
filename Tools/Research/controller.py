@@ -77,6 +77,8 @@ class ResearchController:
             "planned_queries": [],
             "candidate_urls": [],
             "selected_urls": [],
+            "source_selector_ids": [],
+            "source_selector_used": False,
             "errors": [],
         }
 
@@ -145,27 +147,144 @@ class ResearchController:
                 diagnostics=diagnostics,
             )
 
+        # Ranking determinista inicial. Sirve para
+        # reducir ruido y como fallback si el selector
+        # semántico no puede utilizarse.
+        ranked_candidates = rank_results(
+            deduplicated
+        )
+
         candidate_results: list[SearchResult] = []
         candidate_urls: set[str] = set()
         candidate_domains: set[str] = set()
 
-        # Primero reservamos una fuente distinta
-        # para cada consulta, si existe.
-        for query in queries:
+        # El LLM ya dispone de un selector especializado
+        # para juzgar relevancia y preferir fuentes
+        # primarias/oficiales. El controller anterior no
+        # utilizaba esta etapa.
+        try:
+            selected_ids = self.llm.select_source_ids(
+                question,
+                ranked_candidates,
+                max_sources=self.max_fetch_attempts,
+            )
+
+            if not isinstance(
+                selected_ids,
+                list,
+            ):
+                raise ValueError(
+                    "El selector de fuentes no devolvió "
+                    "una lista."
+                )
+
+        except Exception as error:
+            diagnostics["errors"].append(
+                f"source selection: {error}"
+            )
+            selected_ids = []
+
+        diagnostics["source_selector_ids"] = [
+            selected_id
+            for selected_id in selected_ids
+            if (
+                isinstance(selected_id, int)
+                and not isinstance(
+                    selected_id,
+                    bool,
+                )
+            )
+        ]
+
+        for selected_id in selected_ids:
             if (
                 len(candidate_results)
                 >= self.max_fetch_attempts
             ):
                 break
 
-            query_results: list[SearchResult] = []
+            if (
+                not isinstance(selected_id, int)
+                or isinstance(selected_id, bool)
+                or selected_id < 0
+                or selected_id
+                >= len(ranked_candidates)
+            ):
+                continue
 
-            for result in all_results:
-                if result.query != query:
-                    continue
+            selected = ranked_candidates[
+                selected_id
+            ]
+
+            canonical = _canonical_url(
+                selected.url
+            )
+
+            if (
+                not canonical
+                or canonical in candidate_urls
+            ):
+                continue
+
+            candidate_urls.add(canonical)
+            candidate_domains.add(
+                _domain(selected.url)
+            )
+            candidate_results.append(selected)
+
+        diagnostics["source_selector_used"] = bool(
+            candidate_results
+        )
+
+        # Si el selector devuelve menos candidatos de
+        # los necesarios, completamos de forma
+        # determinista. La diversidad de dominio es
+        # aquí un fallback, no el criterio principal.
+        fallback_results = [
+            result
+            for result in ranked_candidates
+            if _canonical_url(result.url)
+            not in candidate_urls
+        ]
+
+        for selected in fallback_results:
+            if (
+                len(candidate_results)
+                >= self.max_fetch_attempts
+            ):
+                break
+
+            domain = _domain(selected.url)
+
+            if domain in candidate_domains:
+                continue
+
+            canonical = _canonical_url(
+                selected.url
+            )
+
+            if not canonical:
+                continue
+
+            candidate_urls.add(canonical)
+            candidate_domains.add(domain)
+            candidate_results.append(selected)
+
+        # Solo repetimos dominios cuando todavía no
+        # alcanzamos el presupuesto de intentos.
+        if (
+            len(candidate_results)
+            < self.max_fetch_attempts
+        ):
+            for selected in fallback_results:
+                if (
+                    len(candidate_results)
+                    >= self.max_fetch_attempts
+                ):
+                    break
 
                 canonical = _canonical_url(
-                    result.url
+                    selected.url
                 )
 
                 if (
@@ -174,94 +293,8 @@ class ResearchController:
                 ):
                     continue
 
-                query_results.append(result)
-
-            if not query_results:
-                continue
-
-            ranked_results = rank_results(
-                query_results
-            )
-
-            selected = next(
-                (
-                    result
-                    for result in ranked_results
-                    if _domain(result.url)
-                    not in candidate_domains
-                ),
-                ranked_results[0],
-            )
-
-            canonical = _canonical_url(
-                selected.url
-            )
-
-            candidate_urls.add(canonical)
-            candidate_domains.add(
-                _domain(selected.url)
-            )
-            candidate_results.append(selected)
-
-        # Completamos la cola con candidatos globales.
-        # Primero priorizamos diversidad de dominios.
-        if (
-            len(candidate_results)
-            < self.max_fetch_attempts
-        ):
-            remaining_results = [
-                result
-                for result in deduplicated
-                if _canonical_url(result.url)
-                not in candidate_urls
-            ]
-
-            ranked_remaining = rank_results(
-                remaining_results
-            )
-
-            for selected in ranked_remaining:
-                if (
-                    len(candidate_results)
-                    >= self.max_fetch_attempts
-                ):
-                    break
-
-                domain = _domain(selected.url)
-
-                if domain in candidate_domains:
-                    continue
-
-                canonical = _canonical_url(
-                    selected.url
-                )
-
                 candidate_urls.add(canonical)
-                candidate_domains.add(domain)
                 candidate_results.append(selected)
-
-            # Solo si todavía faltan candidatos
-            # permitimos repetir dominios.
-            if (
-                len(candidate_results)
-                < self.max_fetch_attempts
-            ):
-                for selected in ranked_remaining:
-                    if (
-                        len(candidate_results)
-                        >= self.max_fetch_attempts
-                    ):
-                        break
-
-                    canonical = _canonical_url(
-                        selected.url
-                    )
-
-                    if canonical in candidate_urls:
-                        continue
-
-                    candidate_urls.add(canonical)
-                    candidate_results.append(selected)
 
         diagnostics["candidate_urls"] = [
             result.url

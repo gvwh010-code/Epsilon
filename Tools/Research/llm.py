@@ -17,30 +17,34 @@ class LLMError(RuntimeError):
 
 _PLAN_RESPONSE_FORMAT: dict[str, Any] = {
     "type": "json_schema",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "queries": {
-                "type": "array",
-                "items": {
-                    "type": "string",
+    "json_schema": {
+        "name": "research_plan",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
                 },
-                "minItems": 3,
-                "maxItems": 3,
-            },
-            "verification_targets": {
-                "type": "array",
-                "items": {
-                    "type": "string",
+                "verification_targets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                    },
+                    "maxItems": 6,
                 },
-                "maxItems": 6,
             },
+            "required": [
+                "queries",
+                "verification_targets",
+            ],
+            "additionalProperties": False,
         },
-        "required": [
-            "queries",
-            "verification_targets",
-        ],
-        "additionalProperties": False,
     },
 }
 
@@ -227,110 +231,115 @@ class LlamaCppClient:
         self,
         question: str,
     ) -> ResearchPlan:
-        content = self._chat(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Eres el planificador de investigación "
-                        "de Epsilon. "
-                        "No respondas la pregunta. "
-                        "No conviertas recuerdos internos en hechos. "
-                        "Trata toda afirmación específica como una "
-                        "hipótesis que debe verificarse. "
-                        "Formula consultas neutrales: no presupongas "
-                        "como verdadera ninguna relación, hecho o mecanismo "
-                        "que el usuario no haya afirmado explícitamente. "
-                        "Incluye una consulta general o cronológica "
-                        "cuando la pregunta trate relaciones entre "
-                        "personas, organizaciones o acontecimientos. "
-                        "Usa el idioma que tenga más probabilidades "
-                        "de recuperar fuentes primarias, aunque sea "
-                        "distinto al idioma del usuario. "
-                        "Devuelve SOLO un objeto JSON con esta forma: "
-                        '{"queries":[],'
-                        '"verification_targets":[]}. '
-                        "queries debe contener exactamente 3 búsquedas "
-                        "web complementarias y bien formuladas. "
-                        "La primera debe cubrir el tema de forma general y neutral. "
-                        "La segunda debe intentar verificar hechos, fechas, eventos "
-                        "o relaciones concretas relevantes. "
-                        "La tercera debe priorizar evidencia primaria, oficial, "
-                        "institucional o periodística reputada. "
-                        "No repitas la misma intención en varias consultas. "
-                        "No introduzcas rangos temporales arbitrarios. "
-                        "Si el usuario no indicó un periodo, no limites la "
-                        "investigación a un rango de años. Puedes usar un año "
-                        "puntual como término de búsqueda únicamente como un "
-                        "hecho a verificar, nunca como una restricción "
-                        "atribuida al usuario. "
-                        "Si la pregunta relaciona o compara varias entidades, "
-                        "mantén juntas las entidades principales en las "
-                        "consultas. No desperdicies consultas investigando por "
-                        "separado la biografía, discografía o historia de cada "
-                        "entidad salvo que el usuario lo haya pedido. "
-                        "Cuando una posible relación no esté afirmada "
-                        "explícitamente por el usuario, formula tanto las "
-                        "queries como los verification_targets de manera "
-                        "falsable y neutral: deben permitir como resultado "
-                        "que no exista evidencia de ella. "
-                        "No introduzcas en las queries nombres específicos de "
-                        "obras, productos, eventos, fechas o mecanismos que no "
-                        "aparezcan en la pregunta original. Si pueden ser "
-                        "hipótesis útiles, colócalos como verification_targets "
-                        "sin presentarlos como hechos. "
-                        "Las queries deben investigar primero el tema planteado "
-                        "por el usuario, no asociaciones procedentes de la "
-                        "memoria interna del modelo. "
-                        "verification_targets puede contener hasta "
-                        "6 preguntas neutrales que deban comprobarse. "
-                        "No redactes como verdadero ningún hecho que "
-                        "todavía deba verificarse."
+        for _ in range(2):
+            content = self._chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Eres el planificador de investigación "
+                            "de Epsilon. "
+                            "No respondas la pregunta. "
+                            "No conviertas recuerdos internos en hechos. "
+                            "Trata toda afirmación específica como una "
+                            "hipótesis que debe verificarse. "
+                            "Formula consultas neutrales: no presupongas "
+                            "como verdadera ninguna relación, hecho o mecanismo "
+                            "que el usuario no haya afirmado explícitamente. "
+                            "Incluye una consulta general o cronológica "
+                            "cuando la pregunta trate relaciones entre "
+                            "personas, organizaciones o acontecimientos. "
+                            "Usa el idioma que tenga más probabilidades "
+                            "de recuperar fuentes primarias, aunque sea "
+                            "distinto al idioma del usuario. "
+                            "Devuelve SOLO un objeto JSON con esta forma: "
+                            '{"queries":[],'
+                            '"verification_targets":[]}. '
+                            "queries debe contener exactamente 3 búsquedas "
+                            "web complementarias y bien formuladas. "
+                            "La primera debe cubrir el tema de forma general y neutral. "
+                            "La segunda debe intentar verificar hechos, fechas, eventos "
+                            "o relaciones concretas relevantes. "
+                            "La tercera debe priorizar evidencia primaria, oficial, "
+                            "institucional o periodística reputada. "
+                            "No repitas la misma intención en varias consultas. "
+                            "No introduzcas rangos temporales arbitrarios. "
+                            "Si el usuario no indicó un periodo, no limites la "
+                            "investigación a un rango de años. Puedes usar un año "
+                            "puntual como término de búsqueda únicamente como un "
+                            "hecho a verificar, nunca como una restricción "
+                            "atribuida al usuario. "
+                            "Si la pregunta relaciona o compara varias entidades, "
+                            "mantén juntas las entidades principales en las "
+                            "consultas. No desperdicies consultas investigando por "
+                            "separado la biografía, discografía o historia de cada "
+                            "entidad salvo que el usuario lo haya pedido. "
+                            "Cuando una posible relación no esté afirmada "
+                            "explícitamente por el usuario, formula tanto las "
+                            "queries como los verification_targets de manera "
+                            "falsable y neutral: deben permitir como resultado "
+                            "que no exista evidencia de ella. "
+                            "No introduzcas en las queries nombres específicos de "
+                            "obras, productos, eventos, fechas o mecanismos que no "
+                            "aparezcan en la pregunta original. Si pueden ser "
+                            "hipótesis útiles, colócalos como verification_targets "
+                            "sin presentarlos como hechos. "
+                            "Las queries deben investigar primero el tema planteado "
+                            "por el usuario, no asociaciones procedentes de la "
+                            "memoria interna del modelo. "
+                            "verification_targets puede contener hasta "
+                            "6 preguntas neutrales que deban comprobarse. "
+                            "No redactes como verdadero ningún hecho que "
+                            "todavía deba verificarse."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": question,
+                    },
+                ],
+                max_tokens=512,
+                temperature=0.0,
+                thinking_budget_tokens=None,
+                reasoning_effort="none",
+                enable_thinking=False,
+                response_format=_PLAN_RESPONSE_FORMAT,
+            )
+
+            try:
+                payload = _extract_json_object(
+                    content
+                )
+
+                queries = _clean_strings(
+                    payload.get("queries"),
+                    limit=3,
+                )
+
+                targets = _clean_strings(
+                    payload.get(
+                        "verification_targets"
                     ),
-                },
-                {
-                    "role": "user",
-                    "content": question,
-                },
-            ],
-            max_tokens=512,
-            temperature=0.0,
-            thinking_budget_tokens=None,
-            reasoning_effort="none",
-            enable_thinking=False,
-            response_format=_PLAN_RESPONSE_FORMAT,
-        )
+                    limit=6,
+                )
 
-        try:
-            payload = _extract_json_object(
-                content
+            except (
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                continue
+
+            if len(queries) != 3:
+                continue
+
+            return ResearchPlan(
+                queries=queries,
+                verification_targets=targets,
             )
-
-            queries = _clean_strings(
-                payload.get("queries"),
-                limit=3,
-            )
-
-            targets = _clean_strings(
-                payload.get(
-                    "verification_targets"
-                ),
-                limit=6,
-            )
-
-        except (
-            ValueError,
-            json.JSONDecodeError,
-        ):
-            queries = ()
-            targets = ()
-
-        if not queries:
-            queries = (question,)
 
         return ResearchPlan(
-            queries=queries,
-            verification_targets=targets,
+            queries=(question,),
+            verification_targets=(),
         )
 
     def select_source_ids(
