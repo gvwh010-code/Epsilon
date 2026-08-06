@@ -108,12 +108,15 @@ class ProjectionManagerTests(unittest.TestCase):
     def make_manager(
         self,
         client: FakeClient,
+        *,
+        required_tool_ids: tuple[str, ...] = (),
     ) -> ProjectionManager:
         return ProjectionManager(
             project_root=self.root,
             client=client,
             model_id="epsilon",
             base_model_id="gemma4-12b-llamacpp",
+            required_tool_ids=required_tool_ids,
         )
 
     def test_plan_is_empty_when_projection_matches(self) -> None:
@@ -157,6 +160,56 @@ class ProjectionManagerTests(unittest.TestCase):
         self.assertEqual(
             result["base_model_id"],
             "gemma4-12b-llamacpp",
+        )
+
+    def test_plan_detects_missing_required_tool(self) -> None:
+        model = self.make_model()
+
+        manager = self.make_manager(
+            FakeClient(model),
+            required_tool_ids=(
+                "epsilon_research",
+            ),
+        )
+
+        plan = manager.plan()
+
+        self.assertTrue(plan.has_changes)
+        self.assertIn(
+            "epsilon_research",
+            plan.changes[0].reasons[0],
+        )
+
+    def test_build_model_merges_required_tools(self) -> None:
+        model = self.make_model()
+        model["meta"]["toolIds"] = [
+            "existing_tool",
+        ]
+
+        manager = self.make_manager(
+            FakeClient(model),
+            required_tool_ids=(
+                "epsilon_research",
+            ),
+        )
+
+        result = manager.build_import_model(
+            model
+        )
+
+        self.assertEqual(
+            result["meta"]["toolIds"],
+            [
+                "existing_tool",
+                "epsilon_research",
+            ],
+        )
+
+        self.assertEqual(
+            model["meta"]["toolIds"],
+            [
+                "existing_tool",
+            ],
         )
 
     def test_update_preserves_server_access_grants(self) -> None:

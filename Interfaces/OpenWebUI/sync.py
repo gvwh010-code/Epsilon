@@ -31,6 +31,7 @@ from knowledge_target import (
 from projection import ProjectionManager
 from skills import SkillsManager
 from functions_manager import FunctionsManager
+from tools_manager import ToolsManager
 from results import (
     DiagnosticResult,
     KnowledgeDiffResult,
@@ -521,6 +522,9 @@ def build_projection_manager(
         client=client,
         model_id=config.openwebui_model,
         base_model_id=config.openwebui_base_model,
+        required_tool_ids=(
+            "epsilon_research",
+        ),
     )
 
 def build_skills_manager(
@@ -540,6 +544,17 @@ def build_functions_manager(
     """Construye el gestor de Functions."""
 
     return FunctionsManager(
+        project_root=PROJECT_ROOT,
+        client=client,
+    )
+
+
+def build_tools_manager(
+    client: OpenWebUIClient,
+) -> ToolsManager:
+    """Construye el gestor de Tools."""
+
+    return ToolsManager(
         project_root=PROJECT_ROOT,
         client=client,
     )
@@ -763,6 +778,17 @@ def run_plan(
                 functions_manager.sync(
                     dry_run=True,
                 )
+
+                print()
+                print("Tools:")
+
+                tools_manager = build_tools_manager(
+                    client,
+                )
+
+                tools_manager.sync(
+                    dry_run=True,
+                )
     except (
         FileNotFoundError,
         OSError,
@@ -942,6 +968,10 @@ def run_apply(confirmed: bool) -> int:
                 client,
             )
 
+            tools_manager = build_tools_manager(
+                client,
+            )
+
             projection_plan = projection_manager.plan()
 
             print_plan(
@@ -963,15 +993,23 @@ def run_apply(confirmed: bool) -> int:
                 dry_run=True,
             )
 
+            print()
+            print("Tools:")
+
+            tools_in_sync = tools_manager.sync(
+                dry_run=True,
+            )
+
             if (
                 not projection_plan.has_changes
                 and skills_in_sync
                 and functions_in_sync
+                and tools_in_sync
             ):
                 print()
                 print(
                     "✓ No había cambios de Projection, "
-                    "Skills ni Functions que aplicar."
+                    "Skills, Functions ni Tools que aplicar."
                 )
                 print(
                     "Knowledge continúa usando su flujo "
@@ -990,11 +1028,6 @@ def run_apply(confirmed: bool) -> int:
                 return 2
 
             try:
-                if projection_plan.has_changes:
-                    projection_manager.apply(
-                        projection_plan
-                    )
-
                 if not skills_in_sync:
                     skills_ok = skills_manager.sync(
                         dry_run=False,
@@ -1019,6 +1052,22 @@ def run_apply(confirmed: bool) -> int:
                             "la sincronización."
                         )
 
+                if not tools_in_sync:
+                    tools_ok = tools_manager.sync(
+                        dry_run=False,
+                    )
+
+                    if not tools_ok:
+                        raise RuntimeError(
+                            "Tools no pudo completar "
+                            "la sincronización."
+                        )
+
+                if projection_plan.has_changes:
+                    projection_manager.apply(
+                        projection_plan
+                    )
+
                 skills_verified = skills_manager.sync(
                     dry_run=True,
                 )
@@ -1038,6 +1087,16 @@ def run_apply(confirmed: bool) -> int:
                 if not functions_verified:
                     raise RuntimeError(
                         "Functions fue actualizada, pero la "
+                        "verificación posterior falló."
+                    )
+
+                tools_verified = tools_manager.sync(
+                    dry_run=True,
+                )
+
+                if not tools_verified:
+                    raise RuntimeError(
+                        "Tools fue actualizada, pero la "
                         "verificación posterior falló."
                     )
 
@@ -1072,7 +1131,7 @@ def run_apply(confirmed: bool) -> int:
 
     print()
     print(
-        "✓ Projection, Skills y Functions reconciliadas."
+        "✓ Projection, Skills, Functions y Tools reconciliadas."
     )
     print(
         "Knowledge continúa usando su flujo "
@@ -1086,6 +1145,7 @@ def print_verification(
     knowledge: KnowledgeDiffResult,
     skills_verified: bool,
     functions_verified: bool,
+    tools_verified: bool,
 ) -> None:
     """Muestra el estado verificado de la proyección local."""
 
@@ -1126,6 +1186,11 @@ def print_verification(
     else:
         print("✗ Functions              No coincide con Git")
 
+    if tools_verified:
+        print("✓ Tools                  Estado verificado")
+    else:
+        print("✗ Tools                  No coincide con Git")
+
     if knowledge_verified:
         print(
             "✓ Knowledge              "
@@ -1163,11 +1228,12 @@ def print_verification(
         projection_verified
         and skills_verified
         and functions_verified
+        and tools_verified
         and knowledge_verified
     ):
         print(
-            "El estado activo de Projection, Skills, Functions "
-            "y Knowledge coincide con el repositorio."
+            "El estado activo de Projection, Skills, Functions, "
+            "Tools y Knowledge coincide con el repositorio."
         )
     else:
         print(
@@ -1198,6 +1264,9 @@ def run_verify() -> int:
             functions_manager = build_functions_manager(
                 client,
             )
+            tools_manager = build_tools_manager(
+                client,
+            )
 
             projection_plan = projection_manager.plan()
             knowledge_result = knowledge_manager.plan()
@@ -1207,6 +1276,10 @@ def run_verify() -> int:
             )
 
             functions_verified = functions_manager.sync(
+                dry_run=True,
+            )
+
+            tools_verified = tools_manager.sync(
                 dry_run=True,
             )
 
@@ -1230,12 +1303,14 @@ def run_verify() -> int:
         knowledge_result,
         skills_verified,
         functions_verified,
+        tools_verified,
     )
 
     if (
         projection_plan.has_changes
         or not skills_verified
         or not functions_verified
+        or not tools_verified
         or knowledge_result.failed
         or knowledge_result.has_changes
     ):

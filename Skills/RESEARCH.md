@@ -1,154 +1,108 @@
 ---
 name: Research
-description: Investiga, busca, comprueba y verifica información externa, actual o incierta usando búsqueda web y fuentes reales antes de responder.
+description: Investiga, busca, comprueba y verifica información externa, actual o incierta mediante Epsilon Research.
 ---
 
 # Research
 
 ## Objetivo
 
-Obtener evidencia externa suficiente para responder con precisión, evitando búsquedas redundantes y consumo innecesario de contexto.
+Obtener evidencia externa suficiente para responder con precisión utilizando
+Epsilon Research como la ruta canónica de investigación del sistema.
 
-La búsqueda descubre fuentes. La lectura de una fuente verifica hechos.
+La lógica de búsqueda, selección de fuentes, lectura, verificación y síntesis
+pertenece al servicio Epsilon Research y no debe duplicarse desde OpenWebUI.
 
 ## Cuándo usar
 
-Usa Research cuando el usuario pida investigar, buscar, comprobar o verificar información, o cuando la respuesta dependa de información actual o incierta.
+Usa Research cuando:
 
-Si la consulta también depende de un proyecto documentado en Knowledge, consulta primero el Knowledge relevante y después investiga únicamente lo externo.
+- el usuario pida investigar, buscar, comprobar o verificar información;
+- la respuesta dependa de información externa o actual;
+- exista incertidumbre sobre un hecho que requiera evidencia;
+- sea necesario respaldar una respuesta con fuentes web.
 
-## Presupuesto de investigación
-
-Para una investigación normal:
-
-- realiza inicialmente una sola búsqueda bien formulada;
-- usa como máximo 3 llamadas a `search_web`;
-- usa como máximo 2 llamadas a `fetch_url`;
-- no repitas una búsqueda con términos casi equivalentes si los resultados existentes ya contienen candidatos adecuados;
-- no abras varias fuentes que solo confirman exactamente el mismo hecho;
-- detente antes de alcanzar estos límites si ya existe evidencia suficiente.
-
-## Presupuesto de investigación
-
-Para una investigación normal existe un límite estricto:
-
-- máximo 3 llamadas a `search_web`;
-- máximo 2 llamadas a `fetch_url`.
-
-Estos límites no se superan aunque falte evidencia.
-
-Si después de alcanzar el límite un hecho no pudo verificarse:
-
-1. deja de usar herramientas;
-2. no intentes nuevas variantes de búsqueda;
-3. descarta cualquier hipótesis no verificada;
-4. responde con la evidencia disponible;
-5. indica claramente qué punto no pudiste confirmar.
-
-Solo una petición explícita del usuario de investigación profunda o exhaustiva permite superar estos límites.
-
-No uses búsquedas adicionales para intentar demostrar una hipótesis surgida de tu conocimiento interno.
-
-Más búsquedas no implican una investigación mejor.
-
-## Control de contexto
-
-Protege la ventana de contexto durante investigaciones con herramientas.
-
-- Prefiere páginas específicas sobre un hecho frente a páginas generales, archivos extensos, índices, feeds, transcripciones o páginas que puedan contener grandes cantidades de texto.
-- Antes de abrir otra fuente, determina qué hecho concreto falta por verificar.
-- Después de obtener una fuente suficiente para un hecho, no sigas acumulando fuentes sobre ese mismo hecho sin necesidad.
-- Si una fuente abierta aporta una gran cantidad de contenido, no abras fuentes adicionales salvo que falte evidencia esencial.
-- Prioriza evidencia relevante sobre cantidad de texto.
-- No continúes investigando únicamente para enriquecer o alargar la respuesta.
+Si la consulta también depende de información disponible en Knowledge,
+consulta primero el contexto relevante del proyecto y utiliza Research
+solamente para aquello que requiera evidencia externa.
 
 ## Flujo obligatorio
 
-Para una investigación web:
+Cuando sea necesaria investigación externa:
 
-1. Identifica los hechos centrales que necesitas comprobar.
-2. Formula una búsqueda específica que pueda localizar evidencia para esos hechos.
-3. Usa `search_web`.
-4. Examina los resultados y selecciona la fuente más adecuada.
-5. Antes de responder, usa `fetch_url` sobre al menos una fuente que sustente los hechos centrales, siempre que exista una fuente accesible.
-6. Si existe una fuente primaria u oficial adecuada, priorízala.
-7. Compara explícitamente lo leído con la afirmación que vas a hacer.
-8. Si queda un hecho central sin verificar, realiza una búsqueda adicional dirigida únicamente a ese hecho.
-9. Solo entonces responde.
+1. identifica qué pregunta concreta debe investigarse;
+2. llama a la herramienta `research`;
+3. formula en `question` una pregunta autosuficiente que describa claramente
+   lo que debe investigarse;
+4. espera el resultado de Epsilon Research;
+5. utiliza ese resultado como evidencia para elaborar la respuesta final.
 
-`search_web` por sí solo no completa una investigación cuando la respuesta depende de hechos externos verificables.
+Ejemplo conceptual:
 
-Los títulos y snippets sirven para descubrir fuentes, no para confirmar hechos cuando puede abrirse una fuente relevante.
+`research(question="¿Cuál es la versión estable actual de OpenWebUI y qué cambios principales incluye?")`
 
-## Verificación
+## Herramienta canónica
 
-Una afirmación solo debe considerarse confirmada cuando una fuente consultada realmente la sustente.
+La herramienta `research` es la única ruta normal para realizar investigación
+web desde Epsilon.
 
-No conviertas en hecho:
+No reproduzcas manualmente dentro de OpenWebUI el proceso que ya realiza
+Epsilon Research.
 
-- una hipótesis surgida durante el razonamiento;
-- una asociación basada solo en conocimiento interno;
-- una afirmación vista únicamente en un snippet;
-- una conclusión que la fuente no diga o no permita establecer claramente.
+En particular, durante una investigación normal:
 
-No uses expresiones como "confirmado", "está demostrado" o equivalentes si la evidencia correspondiente no fue abierta y comprobada.
+- no uses `search_web`;
+- no uses `fetch_url`;
+- no construyas manualmente cadenas de búsqueda y lectura web;
+- no sustituyas silenciosamente Epsilon Research por otra herramienta web.
 
-Si una fuente verifica solo parte de una afirmación, limita la respuesta a esa parte.
+Epsilon Research ya se encarga internamente de:
 
-## Conflictos con conocimiento previo
+- planificar búsquedas;
+- consultar el motor de búsqueda;
+- seleccionar candidatos;
+- obtener fuentes;
+- eliminar duplicados;
+- priorizar evidencia;
+- sintetizar la respuesta;
+- incorporar citas y URLs.
 
-La evidencia reciente no debe descartarse únicamente porque contradiga tu conocimiento interno.
+## Uso eficiente
 
-Si un resultado actual contradice lo que recuerdas:
+Una llamada a `research` debe contener una pregunta suficientemente completa
+para que el servicio pueda investigar el problema de principio a fin.
 
-1. no elijas todavía ninguna de las dos versiones;
-2. abre una fuente adecuada con `fetch_url`;
-3. determina qué información corresponde a la fecha o versión actual;
-4. responde según la evidencia verificada.
+Evita dividir innecesariamente una misma investigación en múltiples llamadas.
 
-Si no logras resolver la contradicción, indícala en lugar de completar el vacío mediante una suposición.
+Realiza una llamada adicional solamente cuando:
 
-## Fuentes
+- aparezca una segunda pregunta realmente distinta;
+- el resultado indique explícitamente que falta un aspecto esencial;
+- el usuario solicite ampliar o profundizar la investigación.
 
-Para hechos verificables, prioriza:
+## Fallos
 
-1. fuentes oficiales o primarias;
-2. documentación;
-3. publicaciones científicas o técnicas;
-4. fuentes secundarias reputadas.
+Si `research` falla o no devuelve una respuesta utilizable:
 
-Reddit y foros son útiles para experiencias prácticas, problemas reales y opiniones, pero no sustituyen una fuente primaria cuando ésta existe.
+- no inventes resultados;
+- no afirmes haber investigado algo que no fue verificado;
+- informa claramente que Epsilon Research no pudo completar la investigación.
 
-No necesitas consultar varias fuentes si una fuente primaria responde claramente la pregunta.
-
-Contrasta más fuentes cuando haya contradicciones, ambigüedad o controversia.
-
-## Causalidad e inferencias
-
-No inventes explicaciones para completar información ausente.
-
-Si el usuario pregunta por qué ocurrió algo, busca una fuente que trate directamente la causa.
-
-Si no encuentras evidencia directa de la causa:
-
-- dilo;
-- no continúes buscando indefinidamente;
-- si existe una explicación razonable, identifícala explícitamente como inferencia.
+No uses automáticamente `search_web` o `fetch_url` como mecanismo alternativo
+sin una instrucción explícita que autorice ese fallback.
 
 ## Respuesta
 
-Responde directamente y proporcionalmente a la pregunta.
+Usa el resultado de Epsilon Research para responder directamente a la pregunta
+del usuario.
+
+Conserva las citas y fuentes relevantes proporcionadas por Research.
 
 Distingue cuando sea necesario entre:
 
-- confirmado;
-- inferencia;
-- incierto.
+- información confirmada;
+- inferencias;
+- información que no pudo verificarse.
 
-No inventes nombres, fechas, versiones, cifras, autorías, relaciones causales ni fuentes.
-
-No afirmes haber consultado una fuente que no abriste.
-
-No incluyas hechos accesorios que no sean necesarios para responder si no fueron verificados.
-
-Detén la investigación tan pronto exista evidencia suficiente para responder los hechos centrales.
+No inventes nombres, fechas, versiones, cifras, autorías, relaciones causales
+ni fuentes.

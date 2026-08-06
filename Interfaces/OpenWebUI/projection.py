@@ -19,11 +19,13 @@ class ProjectionManager(SyncModule):
         client: Any,
         model_id: str,
         base_model_id: str,
+        required_tool_ids: tuple[str, ...] = (),
     ):
         self.project_root = project_root
         self.client = client
         self.model_id = model_id
         self.base_model_id = base_model_id
+        self.required_tool_ids = tuple(required_tool_ids)
         self.projection_path = (
             project_root
             / "Interfaces"
@@ -119,6 +121,50 @@ class ProjectionManager(SyncModule):
                     "de EPSILON_PROJECTION.md."
                 )
 
+        if self.required_tool_ids:
+            remote_meta = remote_model.get("meta")
+
+            if not isinstance(remote_meta, dict):
+                reasons.append(
+                    "La configuración remota 'meta' no es válida."
+                )
+            else:
+                remote_tool_ids = remote_meta.get(
+                    "toolIds"
+                )
+
+                if remote_tool_ids is None:
+                    remote_tool_ids = []
+
+                elif not isinstance(
+                    remote_tool_ids,
+                    list,
+                ):
+                    reasons.append(
+                        "El campo remoto 'meta.toolIds' "
+                        "no es una lista válida."
+                    )
+                    remote_tool_ids = None
+
+                if remote_tool_ids is not None:
+                    missing_tool_ids = [
+                        tool_id
+                        for tool_id
+                        in self.required_tool_ids
+                        if tool_id
+                        not in remote_tool_ids
+                    ]
+
+                    if missing_tool_ids:
+                        reasons.append(
+                            "Faltan Tools requeridos por "
+                            "Epsilon: "
+                            + ", ".join(
+                                missing_tool_ids
+                            )
+                            + "."
+                        )
+
         if not reasons:
             return Plan()
 
@@ -177,6 +223,26 @@ class ProjectionManager(SyncModule):
             if isinstance(remote_meta, dict)
             else {}
         )
+
+        if self.required_tool_ids:
+            remote_tool_ids = meta.get(
+                "toolIds"
+            )
+
+            tool_ids = (
+                list(remote_tool_ids)
+                if isinstance(
+                    remote_tool_ids,
+                    list,
+                )
+                else []
+            )
+
+            for tool_id in self.required_tool_ids:
+                if tool_id not in tool_ids:
+                    tool_ids.append(tool_id)
+
+            meta["toolIds"] = tool_ids
 
         remote_params = (
             remote_model.get("params")
