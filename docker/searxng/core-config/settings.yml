@@ -12,3 +12,21 @@ server:
   secret_key: "smileyv2protectepsilonpassword"
   limiter: false
   image_proxy: true
+engines:
+  - name: brave
+    disabled: true
+
+  - name: duckduckgo
+    disabled: true
+
+  - name: google cse
+    disabled: true
+
+  - name: startpage
+    disabled: true
+
+  - name: duckduckgo web
+    disabled: false
+
+  - name: mwmbl
+    disabled: false
