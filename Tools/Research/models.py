@@ -8,6 +8,7 @@ from typing import Any
 class ResearchPlan:
     queries: tuple[str, ...]
     verification_targets: tuple[str, ...]
+    source_mode: str = "factual"
 
 
 @dataclass(frozen=True)

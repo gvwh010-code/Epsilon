@@ -14,7 +14,7 @@ server:
   image_proxy: true
 engines:
   - name: brave
-    disabled: true
+    disabled: false
 
   - name: duckduckgo
     disabled: true
@@ -26,7 +26,10 @@ engines:
     disabled: true
 
   - name: duckduckgo web
-    disabled: false
+    disabled: true
 
   - name: mwmbl
-    disabled: false
+    disabled: true
+
+  - name: yep
+    disabled: true

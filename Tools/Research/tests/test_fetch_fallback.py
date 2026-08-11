@@ -81,7 +81,10 @@ class FetchFallbackTests(unittest.TestCase):
         )
 
         result = controller.run(
-            "pregunta de prueba"
+            (
+            "Investiga Alpha Beta: historia, "
+            "aportes y diferencias"
+        )
         )
 
         self.assertEqual(

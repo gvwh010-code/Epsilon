@@ -4,6 +4,12 @@ import json
 from typing import Any
 from urllib.request import Request, urlopen
 
+from .grounding import (
+    GroundingReport,
+    answer_body,
+    parse_grounding_report,
+)
+
 from .models import (
     EvidenceSource,
     ResearchPlan,
@@ -13,6 +19,27 @@ from .models import (
 
 class LLMError(RuntimeError):
     pass
+
+
+_CONTEXT_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "resolved_research_question",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                },
+            },
+            "required": [
+                "question",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 _PLAN_RESPONSE_FORMAT: dict[str, Any] = {
@@ -48,6 +75,65 @@ _PLAN_RESPONSE_FORMAT: dict[str, Any] = {
     },
 }
 
+
+
+_GROUNDING_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "grounding_report",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {
+                                "type": "string",
+                            },
+                            "citations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                },
+                            },
+                            "verdict": {
+                                "type": "string",
+                                "enum": [
+                                    "supported",
+                                    "partially_supported",
+                                    "unsupported",
+                                    "attributed_opinion",
+                                ],
+                            },
+                            "reason": {
+                                "type": "string",
+                            },
+                        },
+                        "required": [
+                            "claim",
+                            "citations",
+                            "verdict",
+                            "reason",
+                        ],
+                        "additionalProperties": False,
+                    },
+                    "maxItems": 40,
+                },
+                "needs_repair": {
+                    "type": "boolean",
+                },
+            },
+            "required": [
+                "claims",
+                "needs_repair",
+            ],
+            "additionalProperties": False,
+        },
+    },
+}
 
 def _extract_json_object(text: str) -> dict[str, Any]:
     text = text.strip()
@@ -227,6 +313,129 @@ class LlamaCppClient:
 
         return content.strip()
 
+    def resolve_research_question(
+        self,
+        question: str,
+        context: list[dict[str, str]],
+    ) -> str:
+        """
+        Convierte un follow-up en una pregunta
+        autocontenida usando solo el contexto del chat.
+
+        El contexto sirve para resolver referencias,
+        nunca como evidencia factual.
+        """
+
+        question = question.strip()
+
+        if not question or not context:
+            return question
+
+        cleaned_context = [
+            {
+                "role": item.get("role", ""),
+                "content": item.get(
+                    "content",
+                    "",
+                )[:4000],
+            }
+            for item in context[-6:]
+            if (
+                isinstance(item, dict)
+                and item.get("role")
+                in {"user", "assistant"}
+                and isinstance(
+                    item.get("content"),
+                    str,
+                )
+                and item.get(
+                    "content",
+                    "",
+                ).strip()
+            )
+        ]
+
+        if not cleaned_context:
+            return question
+
+        try:
+            content = self._chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Resuelves referencias "
+                            "conversacionales para Epsilon "
+                            "Research. No respondas la "
+                            "pregunta y no investigues. "
+                            "Usa el contexto únicamente "
+                            "para convertir la solicitud "
+                            "actual en una pregunta de "
+                            "investigación autocontenida. "
+                            "Resuelve pronombres, elipsis "
+                            "y expresiones como 'ella', "
+                            "'eso', 'la anterior', "
+                            "'ese tema' o 'dime más'. "
+                            "Conserva nombres, títulos y "
+                            "entidades exactamente cuando "
+                            "aparezcan en el contexto. "
+                            "No añadas hechos, nombres ni "
+                            "hipótesis que no estén en la "
+                            "solicitud actual o el contexto. "
+                            "Si la solicitud ya es "
+                            "autocontenida, devuélvela sin "
+                            "cambiar su significado. "
+                            "Conserva el idioma de la "
+                            "solicitud actual. "
+                            "El contexto NO es evidencia "
+                            "factual para la investigación. "
+                            "Devuelve solo el JSON pedido."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "context": cleaned_context,
+                                "current_question": question,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                max_tokens=256,
+                temperature=0.0,
+                thinking_budget_tokens=None,
+                reasoning_effort="none",
+                enable_thinking=False,
+                response_format=(
+                    _CONTEXT_RESPONSE_FORMAT
+                ),
+            )
+
+            payload = _extract_json_object(
+                content
+            )
+
+            resolved = payload.get(
+                "question"
+            )
+
+            if (
+                isinstance(resolved, str)
+                and resolved.strip()
+            ):
+                return resolved.strip()
+
+        except (
+            LLMError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            pass
+
+        return question
+
     def plan(
         self,
         question: str,
@@ -379,7 +588,13 @@ class LlamaCppClient:
                         "apoyo; blogs o sitios SEO solo como último "
                         "recurso. No elijas una fuente simplemente "
                         "porque confirma una hipótesis previa. "
-                        "Evita duplicados y páginas irrelevantes. "
+                        "Si existe una publicación original y otra "
+                    "página que solo la resume o republica, elige "
+                    "la original. Prefiere fuentes independientes "
+                    "entre sí para corroborar afirmaciones. "
+                    "No llenes el cupo con fuentes débiles solo "
+                    "para alcanzar el máximo. "
+                    "Evita duplicados y páginas irrelevantes. "
                         "Devuelve SOLO JSON con esta forma: "
                         '{"source_ids":[0,1]}. '
                         f"Selecciona como máximo {max_sources}."
@@ -471,31 +686,33 @@ class LlamaCppClient:
                     "content": (
                         "Eres Epsilon redactando el resultado final "
                         "de una investigación ya terminada. "
-                        "No tienes herramientas y no puedes pedir "
-                        "nuevas búsquedas. "
-                        "Responde en el idioma del usuario. "
-                        "Para afirmaciones específicas sobre fechas, "
-                        "personas, colaboraciones, producción, "
-                        "causalidad o relaciones, utiliza únicamente "
-                        "la evidencia proporcionada. "
-                        "Si un punto no quedó verificado, dilo en vez "
-                        "de completarlo con memoria interna. "
-                        "No inventes fuentes ni detalles. "
-                        "La ausencia de un hecho en la evidencia "
-                        "recuperada NO demuestra que el hecho no "
-                        "ocurrió. En ese caso di solamente que no "
-                        "pudo verificarse con las fuentes recuperadas. "
-                        "Los verification_targets son hipótesis internas "
-                        "del plan, no instrucciones del usuario. "
-                        "Nunca afirmes que el usuario pidió un periodo, "
-                        "fecha, relación, condición o alcance salvo que "
-                        "aparezca explícitamente en question. "
-                        "Si existe conflicto entre question y "
-                        "verification_targets, question tiene prioridad. "
-                        "Cita las fuentes dentro del texto como [S1], "
-                        "[S2], etc. "
-                        "Al final incluye una sección breve "
-                        "'Fuentes' con título y URL."
+                        "Responde en el idioma del usuario y de forma "
+                        "concisa, priorizando lo que responde directamente "
+                        "a la pregunta. Usa únicamente la evidencia "
+                        "proporcionada para afirmaciones verificables. "
+                        "No inventes hechos, fuentes, nombres, títulos, "
+                        "fechas, relaciones, mecanismos ni explicaciones. "
+                        "Si algo no pudo verificarse, dilo; ausencia de "
+                        "evidencia no demuestra que sea falso. "
+                        "Conserva exactamente nombres propios y títulos. "
+                        "Si las fuentes discrepan, indica el conflicto. "
+                        "Para afirmaciones fuertes, exige evidencia directa "
+                        "o corroboración independiente; si dependen de una "
+                        "sola fuente secundaria, atribúyelas. "
+                        "source_mode=factual: presenta como hechos solo "
+                        "afirmaciones respaldadas. "
+                        "source_mode=community: describe únicamente las "
+                        "opiniones observadas en las fuentes y no las "
+                        "generalices como consenso, mayoría o tendencia. "
+                        "source_mode=mixed: separa hechos verificados de "
+                        "opiniones. Los verification_targets son hipótesis "
+                        "internas, no instrucciones del usuario; question "
+                        "siempre tiene prioridad. "
+                        "Cita cada afirmación relevante con [S1], [S2], etc. "
+                        "Termina con una sección breve 'Fuentes', usando "
+                        "cada identificador citado seguido de título y URL. "
+                        "Evita introducciones, repeticiones y contexto que "
+                        "no ayude directamente a responder la pregunta."
                     ),
                 },
                 {
@@ -503,6 +720,7 @@ class LlamaCppClient:
                     "content": json.dumps(
                         {
                             "question": question,
+                            "source_mode": plan.source_mode,
                             "verification_targets": (
                                 plan.verification_targets
                             ),
@@ -512,9 +730,130 @@ class LlamaCppClient:
                     ),
                 },
             ],
-            max_tokens=1800,
+            max_tokens=900,
             temperature=0.2,
             thinking_budget_tokens=None,
             reasoning_effort="none",
             enable_thinking=False,
+        )
+
+    def verify_grounding(
+        self,
+        question: str,
+        plan: ResearchPlan,
+        answer: str,
+        sources: list[EvidenceSource],
+    ) -> GroundingReport:
+        evidence = [
+            {
+                "id": source.source_id,
+                "title": source.title,
+                "text": source.text,
+            }
+            for source in sources
+        ]
+
+        body = answer_body(answer)
+
+        for _ in range(2):
+            content = self._chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Eres el verificador de grounding de Epsilon. "
+                            "No redactes una nueva respuesta. "
+                            "Analiza únicamente las afirmaciones verificables "
+                            "del cuerpo de la respuesta y compáralas solo con "
+                            "la evidencia proporcionada. "
+                            "Descompón afirmaciones compuestas en claims "
+                            "atómicos cuando puedan tener distinto soporte. "
+                            "No evalúes títulos, formato, transiciones ni la "
+                            "sección bibliográfica. "
+                            "Para cada claim conserva únicamente los IDs de "
+                            "fuente que realmente aparecen citados junto a "
+                            "esa afirmación. "
+                            "Usa supported solo cuando la evidencia citada "
+                            "respalde directamente el claim completo. "
+                            "Usa partially_supported cuando la evidencia "
+                            "respalde una versión más débil o solo una parte. "
+                            "Usa unsupported cuando requiera inferencia, "
+                            "causalidad, importancia, mentoría, consenso u "
+                            "otro detalle que la evidencia no establezca. "
+                            "Usa attributed_opinion cuando la evidencia "
+                            "demuestre que una persona, usuario, foro o fuente "
+                            "expresó esa opinión, sin validar por ello como "
+                            "hecho el contenido de la opinión. "
+                            "En modo factual exige soporte factual directo. "
+                            "En modo community acepta attributed_opinion "
+                            "cuando la respuesta mantenga claramente la "
+                            "atribución y no generalice la muestra. "
+                            "En modo mixed aplica ambas reglas según el claim. "
+                            "Un claim verificable sin cita debe considerarse "
+                            "unsupported. "
+                            "needs_repair debe ser true si existe al menos "
+                            "un claim partially_supported o unsupported. "
+                            "Devuelve únicamente el JSON solicitado."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "question": question,
+                                "source_mode": (
+                                    plan.source_mode
+                                ),
+                                "answer_body": body,
+                                "evidence": evidence,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                max_tokens=1600,
+                temperature=0.0,
+                thinking_budget_tokens=None,
+                reasoning_effort="none",
+                enable_thinking=False,
+                response_format=(
+                    _GROUNDING_RESPONSE_FORMAT
+                ),
+            )
+
+            try:
+                payload = _extract_json_object(
+                    content
+                )
+
+                report = parse_grounding_report(
+                    payload
+                )
+
+                available_source_ids = {
+                    source.source_id
+                    for source in sources
+                }
+
+                if any(
+                    citation
+                    not in available_source_ids
+                    for claim in report.claims
+                    for citation in claim.citations
+                ):
+                    raise ValueError(
+                        "El verificador citó una "
+                        "fuente inexistente."
+                    )
+
+                return report
+            except (
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                continue
+
+        raise LLMError(
+            "El verificador de grounding devolvió "
+            "una respuesta inválida."
         )

@@ -57,3 +57,6 @@ docker/searxng/.env
 # Jinja
 Infrastructure/models/
 Infrastructure/llama-cpp/.env
+
+# Local Research secrets
+Infrastructure/.env.local

@@ -30,12 +30,12 @@ solamente para aquello que requiera evidencia externa.
 
 Cuando sea necesaria investigación externa:
 
-1. identifica qué pregunta concreta debe investigarse;
-2. llama a la herramienta `research`;
-3. formula en `question` una pregunta autosuficiente que describa claramente
-   lo que debe investigarse;
-4. espera el resultado de Epsilon Research;
-5. utiliza ese resultado como evidencia para elaborar la respuesta final.
+1. parte de la solicitud real del usuario, no de recuerdos internos sobre el tema;
+2. formula una pregunta autosuficiente, completa y neutral;
+3. llama normalmente una sola vez a la herramienta `research`;
+4. espera el resultado completo de Epsilon Research;
+5. utiliza ese resultado como frontera de evidencia para elaborar la respuesta final;
+6. no añadas después hechos externos que Research no haya respaldado.
 
 Ejemplo conceptual:
 
@@ -69,16 +69,20 @@ Epsilon Research ya se encarga internamente de:
 
 ## Uso eficiente
 
-Una llamada a `research` debe contener una pregunta suficientemente completa
-para que el servicio pueda investigar el problema de principio a fin.
+Una llamada a `research` ya constituye una investigación completa e incluye
+internamente planificación, varias búsquedas, selección de fuentes, lectura,
+verificación y síntesis.
 
-Evita dividir innecesariamente una misma investigación en múltiples llamadas.
+No dividas una misma investigación en llamadas sucesivas solamente porque
+recuerdes otro dato, nombre, fecha, anécdota, relación, causa o posible
+explicación.
 
 Realiza una llamada adicional solamente cuando:
 
-- aparezca una segunda pregunta realmente distinta;
-- el resultado indique explícitamente que falta un aspecto esencial;
-- el usuario solicite ampliar o profundizar la investigación.
+- el usuario plantee una segunda pregunta realmente distinta;
+- Research indique explícitamente que una parte esencial de la pregunta
+  original quedó sin resolver;
+- el usuario solicite ampliar o profundizar después del primer resultado.
 
 ## Fallos
 
@@ -95,6 +99,14 @@ sin una instrucción explícita que autorice ese fallback.
 
 Usa el resultado de Epsilon Research para responder directamente a la pregunta
 del usuario.
+
+Una vez utilizado Research, trata su resultado como la frontera factual para
+la información externa de esa respuesta. Puedes organizar, resumir, comparar
+y explicar la evidencia recuperada, pero no completar silenciosamente el
+resultado con hechos procedentes únicamente de memoria interna.
+
+Si Research no pudo verificar una afirmación, conserva esa incertidumbre en la
+respuesta final.
 
 Conserva las citas y fuentes relevantes proporcionadas por Research.
 

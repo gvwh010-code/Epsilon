@@ -522,8 +522,16 @@ def build_projection_manager(
         client=client,
         model_id=config.openwebui_model,
         base_model_id=config.openwebui_base_model,
-        required_tool_ids=(
+        required_tool_ids=(),
+        required_filter_ids=(),
+        forbidden_tool_ids=(
             "epsilon_research",
+        ),
+        forbidden_filter_ids=(
+            "epsilon_research_grounding",
+        ),
+        forbidden_default_feature_ids=(
+            "web_search",
         ),
     )
 

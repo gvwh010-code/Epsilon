@@ -16,16 +16,9 @@ class FakeLLM:
         self.selection_calls = []
 
     def plan(self, question):
-        return ResearchPlan(
-            queries=(
-                "query one",
-                "query two",
-                "query three",
-                "query four",
-            ),
-            verification_targets=(
-                "target",
-            ),
+        raise AssertionError(
+            "ResearchController no debe usar "
+            "el LLM para planificar búsquedas."
         )
 
     def select_source_ids(
@@ -109,7 +102,10 @@ class ResearchControllerTests(
         )
 
         result = controller.run(
-            "Pregunta de prueba"
+            (
+            "Investiga Alpha Beta: historia, "
+            "aportes y diferencias"
+        )
         )
 
         self.assertEqual(
@@ -124,15 +120,9 @@ class ResearchControllerTests(
 
         self.assertEqual(
             len(llm.selection_calls),
-            1,
+            0,
         )
-
-        self.assertEqual(
-            fetcher.calls[0],
-            "https://example.com/3",
-        )
-
-        self.assertTrue(
+        self.assertFalse(
             result.diagnostics[
                 "source_selector_used"
             ],

@@ -99,3 +99,46 @@ class WebFetcherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebFetcherLinksTests(unittest.TestCase):
+    def test_html_extracts_title_and_links(self):
+        html = b"""
+        <html>
+          <head>
+            <title>Original Interview</title>
+          </head>
+          <body>
+            <p>Evidence text</p>
+            <a href="/interviews/1993">
+              Full interview transcript
+            </a>
+          </body>
+        </html>
+        """
+
+        with patch(
+            "Tools.Research.fetch.urlopen",
+            return_value=FakeResponse(
+                html,
+                "text/html",
+            ),
+        ):
+            page = WebFetcher().fetch_page(
+                "https://archive.test/article"
+            )
+
+        self.assertEqual(
+            page.title,
+            "Original Interview",
+        )
+
+        self.assertEqual(
+            page.links[0].url,
+            "https://archive.test/interviews/1993",
+        )
+
+        self.assertEqual(
+            page.links[0].text,
+            "Full interview transcript",
+        )

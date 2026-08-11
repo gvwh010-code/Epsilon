@@ -1,10 +1,12 @@
 """
 title: Epsilon Research
 description: Herramienta OpenWebUI para investigar y verificar información mediante Epsilon Research.
-version: 0.1.0
+version: 0.3.0
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
@@ -38,25 +40,157 @@ class Tools:
     async def research(
         self,
         question: str,
+        __request__: Any = None,
+        __metadata__: Any = None,
     ) -> str:
         """
-        Investiga una pregunta concreta mediante Epsilon Research.
+        Realiza una investigación web completa mediante Epsilon Research.
 
-        Usa esta herramienta cuando necesites verificar hechos,
-        consultar información externa o actual, o responder con
-        evidencia web. No la uses cuando la respuesta pueda
-        resolverse únicamente con el contexto ya disponible.
+        Una llamada ya incluye planificación, múltiples búsquedas,
+        selección y lectura de fuentes, verificación y síntesis.
+        Normalmente debes llamar esta herramienta una sola vez por
+        pregunta de investigación.
 
-        :param question: Pregunta concreta que debe investigarse.
-        :return: Respuesta sintetizada con citas y fuentes.
+        Dentro de un mismo turno de OpenWebUI solamente la primera
+        invocación ejecuta una investigación real. Las llamadas
+        posteriores del mismo request se bloquean y deben reutilizar
+        la evidencia obtenida en la primera llamada.
+
+        Pasa una pregunta completa y neutral basada en la solicitud
+        real del usuario. No introduzcas como hechos o hipótesis de
+        búsqueda datos procedentes únicamente de tu memoria interna.
+
+        Después de obtener el resultado, úsalo como frontera factual
+        para la respuesta final. No añadas hechos externos no
+        respaldados por la investigación.
+
+        :param question: Pregunta completa y neutral que debe investigarse.
+        :return: Investigación sintetizada con citas y fuentes.
         """
 
         question = question.strip()
 
-        if not question:
+        metadata = (
+            __metadata__
+            if isinstance(
+                __metadata__,
+                dict,
+            )
+            else {}
+        )
+
+        user_prompt = metadata.get(
+            "user_prompt"
+        )
+
+        if (
+            isinstance(user_prompt, str)
+            and user_prompt.strip()
+        ):
+            research_question = (
+                user_prompt.strip()
+            )
+        else:
+            research_question = question
+
+        if not research_question:
             return (
                 "No se proporcionó una pregunta "
                 "de investigación válida."
+            )
+
+        request_state = (
+            getattr(
+                __request__,
+                "state",
+                None,
+            )
+            if __request__ is not None
+            else None
+        )
+
+        state_key = (
+            "_epsilon_research_turn_result"
+        )
+
+        failure_key = (
+            "_epsilon_research_turn_failure"
+        )
+
+        attempts_key = (
+            "_epsilon_research_turn_attempts"
+        )
+
+        max_attempts = 2
+
+        cached_result = (
+            getattr(
+                request_state,
+                state_key,
+                None,
+            )
+            if request_state is not None
+            else None
+        )
+
+        if isinstance(cached_result, dict):
+            cached_answer = cached_result.get(
+                "answer"
+            )
+
+            if (
+                isinstance(cached_answer, str)
+                and cached_answer.strip()
+            ):
+                return (
+                    "Epsilon Research ya se completó "
+                    "en este turno. No se ejecutó una "
+                    "nueva investigación. Usa la "
+                    "evidencia obtenida en la llamada "
+                    "anterior y continúa con la "
+                    "respuesta final."
+                )
+
+        attempts = (
+            getattr(
+                request_state,
+                attempts_key,
+                0,
+            )
+            if request_state is not None
+            else 0
+        )
+
+        if not isinstance(attempts, int):
+            attempts = 0
+
+        if (
+            request_state is not None
+            and attempts >= max_attempts
+        ):
+            previous_failure = getattr(
+                request_state,
+                failure_key,
+                None,
+            )
+
+            if (
+                isinstance(previous_failure, str)
+                and previous_failure.strip()
+            ):
+                return previous_failure
+
+            return (
+                "Epsilon Research no pudo completar "
+                "la investigación después de los "
+                "intentos permitidos."
+            )
+
+        if request_state is not None:
+            setattr(
+                request_state,
+                attempts_key,
+                attempts + 1,
             )
 
         try:
@@ -66,7 +200,7 @@ class Tools:
                 response = await client.post(
                     self.valves.RESEARCH_URL,
                     json={
-                        "question": question,
+                        "question": research_question,
                     },
                 )
 
@@ -114,5 +248,44 @@ class Tools:
                 "Epsilon Research devolvió una "
                 "respuesta vacía."
             )
+
+        sources = payload.get(
+            "sources"
+        )
+
+        has_evidence = (
+            bool(sources)
+            if isinstance(sources, list)
+            else True
+        )
+
+        if not has_evidence:
+            if request_state is not None:
+                setattr(
+                    request_state,
+                    failure_key,
+                    answer,
+                )
+
+            return answer
+
+        if request_state is not None:
+            setattr(
+                request_state,
+                state_key,
+                {
+                    "question": research_question,
+                    "answer": answer,
+                },
+            )
+
+            if hasattr(
+                request_state,
+                failure_key,
+            ):
+                delattr(
+                    request_state,
+                    failure_key,
+                )
 
         return answer

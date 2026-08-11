@@ -1,11 +1,21 @@
 from __future__ import annotations
+from .planning import build_research_plan
 from .ranking import rank_results
+from .selection import select_candidates
+from .passages import select_relevant_passages
+from .provenance import (
+    provenance_candidates,
+    should_replace_source,
+)
+
+import time
 
 from urllib.parse import (
     urlsplit,
     urlunsplit,
 )
 
+from .grounding import citation_diagnostics
 from .models import (
     EvidenceSource,
     ResearchResult,
@@ -43,11 +53,18 @@ class ResearchController:
         max_searches: int = 3,
         max_fetches: int = 3,
         max_fetch_attempts: int = 5,
+        max_provenance_fetches: int = 0,
     ):
         if max_fetch_attempts < max_fetches:
             raise ValueError(
                 "max_fetch_attempts no puede ser menor "
                 "que max_fetches."
+            )
+
+        if max_provenance_fetches < 0:
+            raise ValueError(
+                "max_provenance_fetches "
+                "no puede ser negativo."
             )
 
         self.llm = llm
@@ -56,10 +73,14 @@ class ResearchController:
         self.max_searches = max_searches
         self.max_fetches = max_fetches
         self.max_fetch_attempts = max_fetch_attempts
+        self.max_provenance_fetches = (
+            max_provenance_fetches
+        )
 
     def run(
         self,
         question: str,
+        context: list[dict[str, str]] | None = None,
     ) -> ResearchResult:
         question = question.strip()
 
@@ -72,9 +93,13 @@ class ResearchController:
             "searches_used": 0,
             "fetches_used": 0,
             "fetch_attempts_used": 0,
+            "provenance_attempts_used": 0,
+            "provenance_urls": [],
+            "provenance_replacements": [],
             "search_results": 0,
             "sources_fetched": 0,
             "planned_queries": [],
+            "search_provider_events": [],
             "candidate_urls": [],
             "selected_urls": [],
             "source_selector_ids": [],
@@ -82,7 +107,52 @@ class ResearchController:
             "errors": [],
         }
 
-        plan = self.llm.plan(question)
+        original_question = question
+        context = context or []
+
+        diagnostics[
+            "context_message_count"
+        ] = len(context)
+
+        diagnostics["context_used"] = False
+        diagnostics[
+            "original_question"
+        ] = original_question
+
+        resolver = getattr(
+            self.llm,
+            "resolve_research_question",
+            None,
+        )
+
+        if context and callable(resolver):
+            try:
+                resolved = resolver(
+                    question,
+                    context,
+                )
+
+                if (
+                    isinstance(resolved, str)
+                    and resolved.strip()
+                ):
+                    question = resolved.strip()
+                    diagnostics[
+                        "context_used"
+                    ] = True
+
+            except Exception as error:
+                diagnostics["errors"].append(
+                    f"context: {error}"
+                )
+
+        diagnostics[
+            "resolved_question"
+        ] = question
+
+        plan = build_research_plan(
+            question
+        )
 
         queries = list(
             plan.queries[: self.max_searches]
@@ -92,8 +162,10 @@ class ResearchController:
             queries = [question]
 
         diagnostics["planned_queries"] = queries
+        diagnostics["source_mode"] = plan.source_mode
 
         all_results: list[SearchResult] = []
+        search_started = time.monotonic()
 
         for query in queries:
             diagnostics["searches_used"] = (
@@ -113,6 +185,30 @@ class ResearchController:
                 diagnostics["errors"].append(
                     f"search: {error}"
                 )
+            finally:
+                provider_event = getattr(
+                    self.searcher,
+                    "last_diagnostics",
+                    None,
+                )
+
+                if isinstance(
+                    provider_event,
+                    dict,
+                ):
+                    diagnostics[
+                        "search_provider_events"
+                    ].append(
+                        {
+                            "query": query,
+                            **provider_event,
+                        }
+                    )
+
+        diagnostics["search_seconds"] = round(
+            time.monotonic() - search_started,
+            3,
+        )
 
         deduplicated: list[SearchResult] = []
         seen_urls: set[str] = set()
@@ -151,150 +247,29 @@ class ResearchController:
         # reducir ruido y como fallback si el selector
         # semántico no puede utilizarse.
         ranked_candidates = rank_results(
-            deduplicated
+            deduplicated,
+            queries[0],
+            source_mode=plan.source_mode,
         )
 
         candidate_results: list[SearchResult] = []
         candidate_urls: set[str] = set()
         candidate_domains: set[str] = set()
 
-        # El LLM ya dispone de un selector especializado
-        # para juzgar relevancia y preferir fuentes
-        # primarias/oficiales. El controller anterior no
-        # utilizaba esta etapa.
-        try:
-            selected_ids = self.llm.select_source_ids(
-                question,
-                ranked_candidates,
-                max_sources=self.max_fetch_attempts,
-            )
-
-            if not isinstance(
-                selected_ids,
-                list,
-            ):
-                raise ValueError(
-                    "El selector de fuentes no devolvió "
-                    "una lista."
-                )
-
-        except Exception as error:
-            diagnostics["errors"].append(
-                f"source selection: {error}"
-            )
-            selected_ids = []
-
-        diagnostics["source_selector_ids"] = [
-            selected_id
-            for selected_id in selected_ids
-            if (
-                isinstance(selected_id, int)
-                and not isinstance(
-                    selected_id,
-                    bool,
-                )
-            )
-        ]
-
-        for selected_id in selected_ids:
-            if (
-                len(candidate_results)
-                >= self.max_fetch_attempts
-            ):
-                break
-
-            if (
-                not isinstance(selected_id, int)
-                or isinstance(selected_id, bool)
-                or selected_id < 0
-                or selected_id
-                >= len(ranked_candidates)
-            ):
-                continue
-
-            selected = ranked_candidates[
-                selected_id
-            ]
-
-            canonical = _canonical_url(
-                selected.url
-            )
-
-            if (
-                not canonical
-                or canonical in candidate_urls
-            ):
-                continue
-
-            candidate_urls.add(canonical)
-            candidate_domains.add(
-                _domain(selected.url)
-            )
-            candidate_results.append(selected)
-
-        diagnostics["source_selector_used"] = bool(
-            candidate_results
+        # Selección determinista después del ranking.
+        # Qwen no participa en esta etapa.
+        candidate_results = select_candidates(
+            ranked_candidates,
+            queries,
+            max_candidates=self.max_fetch_attempts,
+            question=queries[0],
         )
 
-        # Si el selector devuelve menos candidatos de
-        # los necesarios, completamos de forma
-        # determinista. La diversidad de dominio es
-        # aquí un fallback, no el criterio principal.
-        fallback_results = [
-            result
-            for result in ranked_candidates
-            if _canonical_url(result.url)
-            not in candidate_urls
-        ]
-
-        for selected in fallback_results:
-            if (
-                len(candidate_results)
-                >= self.max_fetch_attempts
-            ):
-                break
-
-            domain = _domain(selected.url)
-
-            if domain in candidate_domains:
-                continue
-
-            canonical = _canonical_url(
-                selected.url
-            )
-
-            if not canonical:
-                continue
-
-            candidate_urls.add(canonical)
-            candidate_domains.add(domain)
-            candidate_results.append(selected)
-
-        # Solo repetimos dominios cuando todavía no
-        # alcanzamos el presupuesto de intentos.
-        if (
-            len(candidate_results)
-            < self.max_fetch_attempts
-        ):
-            for selected in fallback_results:
-                if (
-                    len(candidate_results)
-                    >= self.max_fetch_attempts
-                ):
-                    break
-
-                canonical = _canonical_url(
-                    selected.url
-                )
-
-                if (
-                    not canonical
-                    or canonical in candidate_urls
-                ):
-                    continue
-
-                candidate_urls.add(canonical)
-                candidate_results.append(selected)
+        diagnostics["source_selector_ids"] = []
+        diagnostics["source_selector_used"] = False
+        diagnostics["selection_mode"] = (
+            "deterministic"
+        )
 
         diagnostics["candidate_urls"] = [
             result.url
@@ -303,6 +278,7 @@ class ResearchController:
 
         sources: list[EvidenceSource] = []
         failed_domains: set[str] = set()
+        fetch_started = time.monotonic()
 
         for result in candidate_results:
             domain = _domain(result.url)
@@ -331,16 +307,150 @@ class ResearchController:
                 + 1
             )
 
+            page = None
+            fetch_page = getattr(
+                self.fetcher,
+                "fetch_page",
+                None,
+            )
+
             try:
-                source_text = self.fetcher.fetch(
-                    result.url
-                )
+                if callable(fetch_page):
+                    page = fetch_page(
+                        result.url
+                    )
+                    source_text = page.text
+                else:
+                    source_text = (
+                        self.fetcher.fetch(
+                            result.url
+                        )
+                    )
             except Exception as error:
                 failed_domains.add(domain)
 
                 diagnostics["errors"].append(
                     f"fetch {result.url}: {error}"
                 )
+                continue
+
+            effective_result = result
+
+            if (
+                page is not None
+                and callable(fetch_page)
+                and int(
+                    diagnostics[
+                        "provenance_attempts_used"
+                    ]
+                )
+                < self.max_provenance_fetches
+            ):
+                remaining = (
+                    self.max_provenance_fetches
+                    - int(
+                        diagnostics[
+                            "provenance_attempts_used"
+                        ]
+                    )
+                )
+
+                candidates = (
+                    provenance_candidates(
+                        result,
+                        page.links,
+                        question,
+                        max_candidates=remaining,
+                    )
+                )
+
+                for candidate in candidates:
+                    if (
+                        int(
+                            diagnostics[
+                                "provenance_attempts_used"
+                            ]
+                        )
+                        >= self.max_provenance_fetches
+                    ):
+                        break
+
+                    diagnostics[
+                        "provenance_attempts_used"
+                    ] = (
+                        int(
+                            diagnostics[
+                                "provenance_attempts_used"
+                            ]
+                        )
+                        + 1
+                    )
+
+                    diagnostics[
+                        "provenance_urls"
+                    ].append(
+                        candidate.url
+                    )
+
+                    try:
+                        candidate_page = (
+                            fetch_page(
+                                candidate.url
+                            )
+                        )
+                    except Exception as error:
+                        diagnostics[
+                            "errors"
+                        ].append(
+                            "provenance "
+                            f"{candidate.url}: "
+                            f"{error}"
+                        )
+                        continue
+
+                    if not should_replace_source(
+                        result,
+                        candidate,
+                    ):
+                        continue
+
+                    effective_result = (
+                        SearchResult(
+                            title=(
+                                candidate_page.title
+                                or candidate.title
+                            ),
+                            url=candidate.url,
+                            snippet=(
+                                candidate.snippet
+                            ),
+                            query=result.query,
+                        )
+                    )
+
+                    source_text = (
+                        candidate_page.text
+                    )
+
+                    diagnostics[
+                        "provenance_replacements"
+                    ].append(
+                        {
+                            "from": result.url,
+                            "to": candidate.url,
+                        }
+                    )
+
+                    break
+
+            relevant_text = (
+                select_relevant_passages(
+                    question,
+                    source_text,
+                )
+            )
+
+            if not relevant_text:
                 continue
 
             sources.append(
@@ -350,13 +460,18 @@ class ResearchController:
                     ),
                     title=result.title,
                     url=result.url,
-                    text=source_text,
+                    text=relevant_text,
                 )
             )
 
             diagnostics["selected_urls"].append(
-                result.url
+                effective_result.url
             )
+
+        diagnostics["fetch_seconds"] = round(
+            time.monotonic() - fetch_started,
+            3,
+        )
 
         diagnostics["fetches_used"] = len(
             sources
@@ -384,6 +499,16 @@ class ResearchController:
             question,
             plan,
             sources,
+        )
+
+        diagnostics[
+            "citation_diagnostics"
+        ] = citation_diagnostics(
+            answer,
+            (
+                source.source_id
+                for source in sources
+            ),
         )
 
         return ResearchResult(

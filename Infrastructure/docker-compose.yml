@@ -35,6 +35,9 @@ services:
       - -m
       - Infrastructure.research.server
 
+    env_file:
+      - ./.env.local
+
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"

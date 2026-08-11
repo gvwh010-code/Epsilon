@@ -98,3 +98,12 @@ python3 Interfaces/OpenWebUI/sync.py knowledge switch --yes
 # Todo
 python3 Interfaces/OpenWebUI/sync.py verify
 
+
+
+epsilon-health start
+
+epsilon-health status
+
+epsilon-health stop
+epsilon-health summary
+

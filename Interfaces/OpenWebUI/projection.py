@@ -20,12 +20,28 @@ class ProjectionManager(SyncModule):
         model_id: str,
         base_model_id: str,
         required_tool_ids: tuple[str, ...] = (),
+        required_filter_ids: tuple[str, ...] = (),
+        forbidden_tool_ids: tuple[str, ...] = (),
+        forbidden_filter_ids: tuple[str, ...] = (),
+        forbidden_default_feature_ids: tuple[str, ...] = (),
     ):
         self.project_root = project_root
         self.client = client
         self.model_id = model_id
         self.base_model_id = base_model_id
         self.required_tool_ids = tuple(required_tool_ids)
+        self.required_filter_ids = tuple(
+            required_filter_ids
+        )
+        self.forbidden_tool_ids = tuple(
+            forbidden_tool_ids
+        )
+        self.forbidden_filter_ids = tuple(
+            forbidden_filter_ids
+        )
+        self.forbidden_default_feature_ids = tuple(
+            forbidden_default_feature_ids
+        )
         self.projection_path = (
             project_root
             / "Interfaces"
@@ -165,6 +181,198 @@ class ProjectionManager(SyncModule):
                             + "."
                         )
 
+        if self.required_filter_ids:
+            remote_meta = remote_model.get("meta")
+
+            if not isinstance(remote_meta, dict):
+                reason = (
+                    "La configuración remota 'meta' "
+                    "no es válida."
+                )
+
+                if reason not in reasons:
+                    reasons.append(reason)
+
+            else:
+                remote_filter_ids = remote_meta.get(
+                    "filterIds"
+                )
+
+                if remote_filter_ids is None:
+                    remote_filter_ids = []
+
+                elif not isinstance(
+                    remote_filter_ids,
+                    list,
+                ):
+                    reasons.append(
+                        "El campo remoto 'meta.filterIds' "
+                        "no es una lista válida."
+                    )
+                    remote_filter_ids = None
+
+                if remote_filter_ids is not None:
+                    missing_filter_ids = [
+                        filter_id
+                        for filter_id
+                        in self.required_filter_ids
+                        if filter_id
+                        not in remote_filter_ids
+                    ]
+
+                    if missing_filter_ids:
+                        reasons.append(
+                            "Faltan Filters requeridos por "
+                            "Epsilon: "
+                            + ", ".join(
+                                missing_filter_ids
+                            )
+                            + "."
+                        )
+
+        if self.forbidden_tool_ids:
+            remote_meta = remote_model.get("meta")
+
+            if not isinstance(remote_meta, dict):
+                reason = (
+                    "La configuración remota 'meta' "
+                    "no es válida."
+                )
+
+                if reason not in reasons:
+                    reasons.append(reason)
+            else:
+                remote_tool_ids = remote_meta.get(
+                    "toolIds"
+                )
+
+                if remote_tool_ids is None:
+                    remote_tool_ids = []
+
+                elif not isinstance(
+                    remote_tool_ids,
+                    list,
+                ):
+                    reasons.append(
+                        "El campo remoto 'meta.toolIds' "
+                        "no es una lista válida."
+                    )
+                    remote_tool_ids = None
+
+                if remote_tool_ids is not None:
+                    forbidden_present = [
+                        tool_id
+                        for tool_id
+                        in self.forbidden_tool_ids
+                        if tool_id in remote_tool_ids
+                    ]
+
+                    if forbidden_present:
+                        reasons.append(
+                            "Tools no permitidos en Epsilon: "
+                            + ", ".join(
+                                forbidden_present
+                            )
+                            + "."
+                        )
+
+        if self.forbidden_filter_ids:
+            remote_meta = remote_model.get("meta")
+
+            if not isinstance(remote_meta, dict):
+                reason = (
+                    "La configuración remota 'meta' "
+                    "no es válida."
+                )
+
+                if reason not in reasons:
+                    reasons.append(reason)
+            else:
+                remote_filter_ids = remote_meta.get(
+                    "filterIds"
+                )
+
+                if remote_filter_ids is None:
+                    remote_filter_ids = []
+
+                elif not isinstance(
+                    remote_filter_ids,
+                    list,
+                ):
+                    reasons.append(
+                        "El campo remoto 'meta.filterIds' "
+                        "no es una lista válida."
+                    )
+                    remote_filter_ids = None
+
+                if remote_filter_ids is not None:
+                    forbidden_present = [
+                        filter_id
+                        for filter_id
+                        in self.forbidden_filter_ids
+                        if filter_id
+                        in remote_filter_ids
+                    ]
+
+                    if forbidden_present:
+                        reasons.append(
+                            "Filters no permitidos en Epsilon: "
+                            + ", ".join(
+                                forbidden_present
+                            )
+                            + "."
+                        )
+
+        if self.forbidden_default_feature_ids:
+            remote_meta = remote_model.get("meta")
+
+            if not isinstance(remote_meta, dict):
+                reason = (
+                    "La configuración remota 'meta' "
+                    "no es válida."
+                )
+
+                if reason not in reasons:
+                    reasons.append(reason)
+
+            else:
+                remote_feature_ids = remote_meta.get(
+                    "defaultFeatureIds"
+                )
+
+                if remote_feature_ids is None:
+                    remote_feature_ids = []
+
+                elif not isinstance(
+                    remote_feature_ids,
+                    list,
+                ):
+                    reasons.append(
+                        "El campo remoto "
+                        "'meta.defaultFeatureIds' "
+                        "no es una lista válida."
+                    )
+                    remote_feature_ids = None
+
+                if remote_feature_ids is not None:
+                    forbidden_present = [
+                        feature_id
+                        for feature_id
+                        in self.forbidden_default_feature_ids
+                        if feature_id
+                        in remote_feature_ids
+                    ]
+
+                    if forbidden_present:
+                        reasons.append(
+                            "Features por defecto no permitidas "
+                            "en Epsilon: "
+                            + ", ".join(
+                                forbidden_present
+                            )
+                            + "."
+                        )
+
         if not reasons:
             return Plan()
 
@@ -243,6 +451,89 @@ class ProjectionManager(SyncModule):
                     tool_ids.append(tool_id)
 
             meta["toolIds"] = tool_ids
+
+        if self.required_filter_ids:
+            remote_filter_ids = meta.get(
+                "filterIds"
+            )
+
+            filter_ids = (
+                list(remote_filter_ids)
+                if isinstance(
+                    remote_filter_ids,
+                    list,
+                )
+                else []
+            )
+
+            for filter_id in self.required_filter_ids:
+                if filter_id not in filter_ids:
+                    filter_ids.append(filter_id)
+
+            meta["filterIds"] = filter_ids
+
+        if self.forbidden_tool_ids:
+            remote_tool_ids = meta.get(
+                "toolIds"
+            )
+
+            tool_ids = (
+                list(remote_tool_ids)
+                if isinstance(
+                    remote_tool_ids,
+                    list,
+                )
+                else []
+            )
+
+            meta["toolIds"] = [
+                tool_id
+                for tool_id in tool_ids
+                if tool_id
+                not in self.forbidden_tool_ids
+            ]
+
+        if self.forbidden_filter_ids:
+            remote_filter_ids = meta.get(
+                "filterIds"
+            )
+
+            filter_ids = (
+                list(remote_filter_ids)
+                if isinstance(
+                    remote_filter_ids,
+                    list,
+                )
+                else []
+            )
+
+            meta["filterIds"] = [
+                filter_id
+                for filter_id in filter_ids
+                if filter_id
+                not in self.forbidden_filter_ids
+            ]
+
+        if self.forbidden_default_feature_ids:
+            remote_feature_ids = meta.get(
+                "defaultFeatureIds"
+            )
+
+            feature_ids = (
+                list(remote_feature_ids)
+                if isinstance(
+                    remote_feature_ids,
+                    list,
+                )
+                else []
+            )
+
+            meta["defaultFeatureIds"] = [
+                feature_id
+                for feature_id in feature_ids
+                if feature_id
+                not in self.forbidden_default_feature_ids
+            ]
 
         remote_params = (
             remote_model.get("params")

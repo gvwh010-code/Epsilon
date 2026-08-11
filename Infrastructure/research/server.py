@@ -153,9 +153,72 @@ class ResearchHandler(BaseHTTPRequestHandler):
             )
             return
 
+        context = payload.get(
+            "context",
+            [],
+        )
+
+        if context is None:
+            context = []
+
+        if not isinstance(context, list):
+            self._send_json(
+                400,
+                {
+                    "error": "invalid_context",
+                },
+            )
+            return
+
+        cleaned_context: list[
+            dict[str, str]
+        ] = []
+
+        for item in context[-6:]:
+            if not isinstance(item, dict):
+                self._send_json(
+                    400,
+                    {
+                        "error": "invalid_context",
+                    },
+                )
+                return
+
+            role = item.get("role")
+            content = item.get("content")
+
+            if (
+                role not in {
+                    "user",
+                    "assistant",
+                }
+                or not isinstance(
+                    content,
+                    str,
+                )
+            ):
+                self._send_json(
+                    400,
+                    {
+                        "error": "invalid_context",
+                    },
+                )
+                return
+
+            content = content.strip()
+
+            if content:
+                cleaned_context.append(
+                    {
+                        "role": role,
+                        "content": content[:4000],
+                    }
+                )
+
         try:
             result = self.server.controller.run(
-                question
+                question,
+                context=cleaned_context,
             )
         except Exception as error:
             self._send_json(
