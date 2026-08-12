@@ -44,5 +44,42 @@ class PassageTests(unittest.TestCase):
         )
 
 
+
+class PassageAccentRegressionTests(
+    unittest.TestCase
+):
+    def test_unaccented_query_matches_accented_source(
+        self,
+    ):
+        from Tools.Research.passages import (
+            select_relevant_passages,
+        )
+
+        first = "Shakira ".ljust(
+            80,
+            "x",
+        )
+        second = (
+            "Shakira y Gerard Piqué terminó "
+            "en junio de 2022."
+        ).ljust(
+            80,
+            "x",
+        )
+
+        selected = select_relevant_passages(
+            "en que año termino shakira con pique?",
+            first + second,
+            chunk_chars=80,
+            overlap_chars=0,
+            max_passages=1,
+        )
+
+        self.assertIn(
+            "junio de 2022",
+            selected,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

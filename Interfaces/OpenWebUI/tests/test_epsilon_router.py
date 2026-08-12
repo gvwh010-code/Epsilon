@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import sys
 import unittest
-from unittest.mock import AsyncMock
+from types import ModuleType
+from unittest.mock import AsyncMock, patch
 
 from functions.epsilon_router import Pipe
 
@@ -244,6 +247,214 @@ class EpsilonRouterTests(
                     ),
                 },
             ],
+        )
+
+
+    async def test_auto_research_uses_context_for_factual_cause(
+        self,
+    ):
+        pipe = Pipe()
+
+        body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "¿En qué año terminaron Shakira y Piqué?",
+                },
+                {
+                    "role": "assistant",
+                    "content": "La separación fue anunciada en 2022.",
+                },
+                {
+                    "role": "user",
+                    "content": "¿y por qué fue?",
+                },
+            ]
+        }
+
+        user = object()
+        generate = AsyncMock(
+            return_value={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "RESEARCH"
+                        }
+                    }
+                ]
+            }
+        )
+
+        users = ModuleType("open_webui.models.users")
+        users.Users = type(
+            "Users",
+            (),
+            {
+                "get_user_by_id": AsyncMock(
+                    return_value=user
+                )
+            },
+        )
+
+        chat = ModuleType("open_webui.utils.chat")
+        chat.generate_chat_completion = generate
+
+        fake_modules = {
+            "open_webui": ModuleType("open_webui"),
+            "open_webui.models": ModuleType(
+                "open_webui.models"
+            ),
+            "open_webui.models.users": users,
+            "open_webui.utils": ModuleType(
+                "open_webui.utils"
+            ),
+            "open_webui.utils.chat": chat,
+        }
+
+        with patch.dict(
+            sys.modules,
+            fake_modules,
+        ):
+            result = await pipe._should_auto_research(
+                "¿y por qué fue?",
+                body,
+                object(),
+                {"id": "user-1"},
+            )
+
+        self.assertTrue(result)
+
+        payload = generate.await_args.args[1]
+        classifier = payload["messages"][0]["content"]
+
+        self.assertIn(
+            "causas o motivos de acontecimientos reales concretos",
+            classifier,
+        )
+
+        request = json.loads(
+            payload["messages"][1]["content"]
+        )
+
+        self.assertEqual(
+            request["current_question"],
+            "¿y por qué fue?",
+        )
+        self.assertEqual(
+            request["context"],
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "¿En qué año terminaron "
+                        "Shakira y Piqué?"
+                    ),
+                },
+            ],
+        )
+
+    async def test_research_followup_can_return_to_qwen(
+        self,
+    ):
+        pipe = Pipe()
+
+        pipe._should_auto_research = AsyncMock(
+            return_value=False
+        )
+        pipe._research = AsyncMock(
+            return_value="research"
+        )
+        pipe._forward_to_base_model = AsyncMock(
+            return_value="qwen"
+        )
+
+        body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "¿Tiene una canción en español?",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Sí. [S1]\nFuentes",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "dejando eso de lado, "
+                        "¿qué opinas de su música?"
+                    ),
+                },
+            ]
+        }
+
+        question = (
+            "dejando eso de lado, "
+            "¿qué opinas de su música?"
+        )
+
+        result = await pipe.pipe(
+            body,
+            __metadata__={"user_prompt": question},
+        )
+
+        self.assertEqual(result, "qwen")
+        pipe._research.assert_not_awaited()
+        pipe._forward_to_base_model.assert_awaited_once()
+        pipe._should_auto_research.assert_awaited_once_with(
+            question,
+            body,
+            None,
+            None,
+        )
+
+    async def test_research_followup_can_continue_research(
+        self,
+    ):
+        pipe = Pipe()
+
+        pipe._should_auto_research = AsyncMock(
+            return_value=True
+        )
+        pipe._research = AsyncMock(
+            return_value="research"
+        )
+        pipe._forward_to_base_model = AsyncMock(
+            return_value="qwen"
+        )
+
+        body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "¿Tiene una canción en español?",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Sí. [S1]\nFuentes",
+                },
+                {
+                    "role": "user",
+                    "content": "¿y cuándo fue publicada?",
+                },
+            ]
+        }
+
+        question = "¿y cuándo fue publicada?"
+
+        result = await pipe.pipe(
+            body,
+            __metadata__={"user_prompt": question},
+        )
+
+        self.assertEqual(result, "research")
+        pipe._research.assert_awaited_once()
+        pipe._forward_to_base_model.assert_not_awaited()
+        pipe._should_auto_research.assert_awaited_once_with(
+            question,
+            body,
+            None,
+            None,
         )
 
 

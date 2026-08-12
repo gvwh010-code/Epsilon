@@ -461,6 +461,9 @@ class ResearchController:
                     title=result.title,
                     url=result.url,
                     text=relevant_text,
+                    published_date=(
+                        result.published_date
+                    ),
                 )
             )
 

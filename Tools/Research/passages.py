@@ -1,6 +1,30 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+
+
+def _normalize_for_match(
+    text: str,
+) -> str:
+    """
+    Normaliza texto para coincidencia léxica.
+
+    Mantiene el texto original intacto para la
+    evidencia; solo elimina diferencias de
+    mayúsculas y diacríticos durante el scoring.
+    """
+
+    normalized = unicodedata.normalize(
+        "NFKD",
+        text.casefold(),
+    )
+
+    return "".join(
+        char
+        for char in normalized
+        if not unicodedata.combining(char)
+    )
 
 
 STOPWORDS = {
@@ -16,16 +40,25 @@ STOPWORDS = {
 
 
 def _terms(question: str) -> set[str]:
+    normalized = _normalize_for_match(
+        question
+    )
+
+    normalized_stopwords = {
+        _normalize_for_match(word)
+        for word in STOPWORDS
+    }
+
     words = re.findall(
-        r"[a-záéíóúüñ0-9]+",
-        question.lower(),
+        r"[a-z0-9]+",
+        normalized,
     )
 
     return {
         word
         for word in words
         if len(word) >= 3
-        and word not in STOPWORDS
+        and word not in normalized_stopwords
     }
 
 
@@ -68,11 +101,15 @@ def select_relevant_passages(
         if not chunk:
             continue
 
-        lowered = chunk.lower()
+        normalized_chunk = (
+            _normalize_for_match(
+                chunk
+            )
+        )
 
         score = sum(
             min(
-                lowered.count(term),
+                normalized_chunk.count(term),
                 4,
             )
             for term in terms

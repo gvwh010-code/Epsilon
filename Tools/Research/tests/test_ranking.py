@@ -251,6 +251,21 @@ class MusicCatalogRankingTests(
         )
 
 
+class ProviderRelevanceTests(unittest.TestCase):
+    def test_provider_relevance_score_decays(self):
+        from Tools.Research.ranking import (
+            provider_relevance_score,
+        )
+
+        self.assertEqual(
+            [
+                provider_relevance_score(i)
+                for i in range(7)
+            ],
+            [20, 16, 12, 8, 4, 0, 0],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

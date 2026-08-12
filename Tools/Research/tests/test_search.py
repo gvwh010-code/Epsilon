@@ -150,6 +150,35 @@ class ExaAndFallbackTests(unittest.TestCase):
             "Relevant evidence",
         )
 
+    def test_exa_preserves_published_date(
+        self,
+    ):
+        client = ExaClient("secret")
+
+        payload = {
+            "results": [
+                {
+                    "title": "Example",
+                    "url": "https://example.com",
+                    "highlights": ["Evidence"],
+                    "publishedDate": (
+                        "2004-02-24T00:00:00.000Z"
+                    ),
+                },
+            ],
+        }
+
+        with patch(
+            "Tools.Research.search.urlopen",
+            return_value=response(payload),
+        ):
+            results = client.search("example")
+
+        self.assertEqual(
+            results[0].published_date,
+            "2004-02-24T00:00:00.000Z",
+        )
+
     def test_primary_success_is_reported(
         self,
     ):

@@ -422,6 +422,25 @@ def source_quality_score(
     return score
 
 
+def provider_relevance_score(
+    position: int,
+) -> int:
+    """
+    Conserva parcialmente la señal de relevancia
+    entregada por el proveedor de búsqueda.
+
+    Las penalizaciones fuertes de calidad siguen
+    pudiendo descartar resultados malos.
+    """
+
+    position = max(position, 0)
+
+    return max(
+        0,
+        20 - position * 4,
+    )
+
+
 def result_rank_score(
     result: SearchResult,
     question: str,
@@ -438,6 +457,9 @@ def result_rank_score(
             result,
             position=position,
             source_mode=source_mode,
+        )
+        + provider_relevance_score(
+            position
         )
     )
 

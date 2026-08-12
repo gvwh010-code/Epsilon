@@ -17,6 +17,7 @@ class SearchResult:
     url: str
     snippet: str
     query: str
+    published_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class EvidenceSource:
     title: str
     url: str
     text: str
+    published_date: str | None = None
 
 
 @dataclass(frozen=True)

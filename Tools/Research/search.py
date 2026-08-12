@@ -125,6 +125,13 @@ class ExaClient:
                         ).strip()
                     ),
                     query=query,
+                    published_date=(
+                        str(
+                            item.get("publishedDate")
+                            or ""
+                        ).strip()
+                        or None
+                    ),
                 )
             )
 

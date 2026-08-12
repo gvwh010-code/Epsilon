@@ -1,10 +1,12 @@
 """
 title: Epsilon Router
 description: Enruta Research explícito directamente a Epsilon Research y conserva Qwen para el resto de Epsilon.
-version: 0.7.0
+version: 0.8.1
 """
 
 from __future__ import annotations
+
+import json
 
 from typing import Any
 
@@ -158,6 +160,54 @@ class Pipe:
 
 
     @classmethod
+    def _routing_context(
+        cls,
+        body: dict,
+    ) -> list[dict[str, str]]:
+        """
+        Contexto de intención para el Router.
+
+        Conserva solicitudes anteriores del usuario,
+        pero no respuestas generadas por el asistente.
+        La resolución factual de referencias pertenece
+        a Epsilon Research.
+        """
+
+        messages = body.get("messages")
+
+        if not isinstance(messages, list):
+            return []
+
+        usable: list[dict[str, str]] = []
+
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+
+            if message.get("role") != "user":
+                continue
+
+            content = cls._content_to_text(
+                message.get("content")
+            )
+
+            if content:
+                usable.append(
+                    {
+                        "role": "user",
+                        "content": content[:4000],
+                    }
+                )
+
+        # La última solicitud es la pregunta actual
+        # y se envía por separado al clasificador.
+        if usable:
+            usable.pop()
+
+        return usable[-6:]
+
+
+    @classmethod
     def _previous_assistant_was_research(
         cls,
         body: dict,
@@ -284,6 +334,7 @@ class Pipe:
     async def _should_auto_research(
         self,
         question: str,
+        body: dict,
         __request__: Any,
         __user__: Any,
     ) -> bool:
@@ -325,25 +376,43 @@ class Pipe:
                 {
                     "role": "system",
                     "content": (
-                        "Clasifica la solicitud del usuario. "
-                        "Responde exclusivamente RESEARCH o QWEN. "
-                        "Usa RESEARCH cuando responder correctamente "
-                        "dependa de verificar hechos específicos del "
-                        "mundo real: personas, organizaciones, obras, "
-                        "discografías, catálogos, fechas, sucesos, "
-                        "productos, versiones, disponibilidad, datos "
-                        "actuales o afirmaciones concretas cuya certeza "
-                        "no deba asumirse de memoria. "
-                        "Usa QWEN para conversación, creatividad, "
-                        "razonamiento, explicación conceptual estable, "
-                        "matemática, programación o redacción que no "
-                        "requiera comprobar hechos externos. "
-                        "Ante duda factual razonable, usa RESEARCH."
+                        "Clasifica la pregunta ACTUAL como RESEARCH "
+                        "o QWEN. Antes de clasificarla, interpreta "
+                        "mentalmente la pregunta de forma autocontenida "
+                        "usando el contexto reciente para resolver "
+                        "referencias, elipsis y expresiones como 'eso', "
+                        "'ellos', 'por qué', 'cuándo', 'quién' o "
+                        "'actualmente'. El contexto sirve para entender "
+                        "la intención, pero no es evidencia factual nueva. "
+                        "Usa RESEARCH cuando responder requiera obtener "
+                        "o verificar información externa sobre el mundo "
+                        "real: datos actuales o cambiantes, fechas o "
+                        "versiones concretas, cifras, existencia o "
+                        "identidad de elementos específicos, historia "
+                        "factual detallada, causas o motivos de "
+                        "acontecimientos reales concretos, declaraciones "
+                        "o acciones atribuidas a personas reales, o "
+                        "hechos precisos que no conviene asumir de memoria. "
+                        "Usa QWEN para conversación, opinión, creatividad, "
+                        "razonamiento, matemática, programación, redacción, "
+                        "resumen del contenido ya presente y explicaciones "
+                        "conceptuales estables. No uses RESEARCH solamente "
+                        "porque se mencione una entidad real. Si la "
+                        "información necesaria ya está explícita en el "
+                        "contexto y solo hay que transformarla, resumirla "
+                        "o comentarla, usa QWEN. "
+                        "Responde exclusivamente RESEARCH o QWEN."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": question,
+                    "content": json.dumps(
+                        {
+                            "context": self._routing_context(body),
+                            "current_question": question,
+                        },
+                        ensure_ascii=False,
+                    ),
                 },
             ],
         }
@@ -555,16 +624,6 @@ class Pipe:
                 body
             )
 
-        continue_research = (
-            question
-            and self._previous_assistant_was_research(
-                body
-            )
-            and not self._exits_research_mode(
-                question
-            )
-        )
-
         explicit_research = (
             question
             and self._is_explicit_research(
@@ -577,7 +636,6 @@ class Pipe:
         if (
             question
             and not explicit_research
-            and not continue_research
             and not self._exits_research_mode(
                 question
             )
@@ -585,6 +643,7 @@ class Pipe:
             auto_research = (
                 await self._should_auto_research(
                     question,
+                    body,
                     __request__,
                     __user__,
                 )
@@ -594,7 +653,6 @@ class Pipe:
             question
             and (
                 explicit_research
-                or continue_research
                 or auto_research
             )
         ):
